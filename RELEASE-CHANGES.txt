@@ -1,3 +1,14 @@
+I.2t-l cumulative update over I.2t-g
+- Settings toggle hides all image-grid badges and annotation overlays.
+- Faster inspector: pauses thumbnail preparation, prioritizes source loading,
+  reuses loaded images, and avoids full viewer rebuilds when saving boxes.
+- Stable proportional mask-canvas fit and incremental mask painting.
+- New boxes automatically selected for Paint Mask or SAM Mask.
+- Similarity/uniqueness score sorting and scoped vector queries repaired.
+- Return to Origin homes the current grid without a new archive scan.
+- Existing icons, incremental discovery, automatic Sanity/BRISQUE and move
+  behavior retained. No databases, caches, model weights or local settings.
+
 I.2t-g icon release
 - Supplied 16x16 browser favicon and 256x256 app/header/README icon.
 - PNG files are byte-for-byte originals; application behavior unchanged.

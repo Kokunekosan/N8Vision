@@ -1,4 +1,16 @@
-const S={viewer:null,path:null,parent:null,files:[],dirs:[],selected:new Set(),treeOpen:true,semantic:null,models:[],enabledModels:new Set(),obsRevision:0,qualityPath:null,boxes:false,masks:false,drawer:false,discovered:[],magnets:new Map(),magnetSeq:0,compare:null,sortKey:'none',sortDir:'asc',gridDetail:'hover',selectionAnchor:null,softCtrl:false,softShift:false,multiWork:[],multiIndex:-1,viewerStretch:false,viewerClean:false,defaultRoot:null,filterPresets:{},sanityBadges:'compact',thumbnailCache:null,imageGridEnabled:true,uncappedUnsanity:false,storageClass:null,scopeRoot:null,scopeRecursive:false,catalogRecursive:false,scopeRootDirs:[],scopeSelections:new Set(),scopeSelectionAnchor:null,gridGapTenths:1,gridRedrawEpoch:0,ringBufferRows:50,ringSouthBias:2,thumbWarmEnabled:true,archiveRoots:[],promptTranslator:{model:'',type:'stable_diffusion',device:'default'},checkpointLibrary:null,textStreamSeen:new Set()};const $=s=>document.querySelector(s),enc=encodeURIComponent;
+const S={viewer:null,path:null,parent:null,files:[],dirs:[],selected:new Set(),treeOpen:true,semantic:null,models:[],enabledModels:new Set(),obsRevision:0,qualityPath:null,boxes:false,masks:false,drawer:false,discovered:[],magnets:new Map(),magnetSeq:0,compare:null,sortKey:'none',sortDir:'asc',gridDetail:'hover',selectionAnchor:null,softCtrl:false,softShift:false,multiWork:[],multiIndex:-1,viewerStretch:false,viewerClean:false,defaultRoot:null,filterPresets:{},sanityBadges:'compact',hideAllBadges:readBadgePreference(),thumbnailCache:null,imageGridEnabled:true,uncappedUnsanity:false,storageClass:null,scopeRoot:null,scopeRecursive:false,catalogRecursive:false,scopeRootDirs:[],scopeSelections:new Set(),scopeSelectionAnchor:null,gridGapTenths:1,gridRedrawEpoch:0,ringBufferRows:50,ringSouthBias:2,thumbWarmEnabled:true,archiveRoots:[],promptTranslator:{model:'',type:'stable_diffusion',device:'default'},checkpointLibrary:null,textStreamSeen:new Set()};const $=s=>document.querySelector(s),enc=encodeURIComponent;
+function readBadgePreference(){try{return localStorage.getItem('n8vision.hideAllBadges')==='1'}catch(_){return false}}
+function applyBadgeVisibility(){
+ document.body.dataset.hideBadges=String(!!S.hideAllBadges);
+ const control=$('#hideAllBadges');if(control)control.checked=!!S.hideAllBadges;
+}
+applyBadgeVisibility();
+const hideAllBadgesControl=$('#hideAllBadges');
+if(hideAllBadgesControl)hideAllBadgesControl.onchange=e=>{
+ S.hideAllBadges=!!e.target.checked;
+ try{localStorage.setItem('n8vision.hideAllBadges',S.hideAllBadges?'1':'0')}catch(_){}
+ applyBadgeVisibility();
+};
 let gridGovernorLast=0;
 function gridActivity(reason='grid'){
  const now=performance.now();if(now-gridGovernorLast<40)return;gridGovernorLast=now;
@@ -90,7 +102,7 @@ async function verifyRootCatalog(entry,key){
   const packet=await j(`/api/browse/new?path=${enc(entry.path)}&recursive=${entry.recursive}&since=${noticeCursors.get(key)?.cursor||0}&epoch=${enc(noticeCursors.get(key)?.epoch||'')}`);
   const current=rootCatalogs.get(key);if(!current)return;
   const active=S._rootBrowseComplete&&rootCatalogKey(S.scopeRoot,S.catalogRecursive)===key;
-  if(active&&Number(packet.observation_revision||0)>Number(String(S.obsRevision).split('-')[0]))refreshJobs();
+  if(active&&!S.viewer&&Number(packet.observation_revision||0)>Number(String(S.obsRevision).split('-')[0]))refreshJobs();
   const known=new Set(current.files.map(f=>canonPath(f.path))),added=[];
   for(const f of packet.files||[])if(!known.has(canonPath(f.path))){known.add(canonPath(f.path));current.files.push(f);added.push(f)}
   noticeCursors.set(key,{cursor:packet.cursor,epoch:packet.epoch});
@@ -110,7 +122,7 @@ async function verifyRootCatalog(entry,key){
  }catch(e){console.warn('New Noticer unavailable',e)}finally{noticeBusy=false}
 }
 async function noticeSweep(){
- try{for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
+ try{if(S.viewer)return;for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
  finally{setTimeout(noticeSweep,5000)}
 }
 setTimeout(noticeSweep,5000);
@@ -239,11 +251,12 @@ function fileQuality(f){const s=qualityScore(f);return s===''?null:Number(s)}
 function applySort(fs){
  if(S.sortKey==='none')return fs;
  const dir=S.sortDir==='asc'?1:-1;
+ const scores=new Map((S.compare?.results||[]).map(x=>[x.path,Number(x.score)]));
  const val=f=>{
   if(S.sortKey==='quality')return fileQuality(f);
   if(S.sortKey==='filename')return f.name.toLowerCase();
-  if(S.sortKey==='uniqueness'&&S.compare&&S.compare.kind==='unique'){const x=S.compare.results.find(x=>x.path===f.path);return x?Number(x.score):null}
-  if(S.sortKey==='similarity'&&S.compare&&S.compare.kind==='similar'){const x=S.compare.results.find(x=>x.path===f.path);return x?Number(x.score):null}
+  if(S.sortKey==='uniqueness'&&S.compare&&S.compare.kind==='unique')return scores.get(f.path)??null;
+  if(S.sortKey==='similarity'&&S.compare&&S.compare.kind==='similar')return scores.get(f.path)??null;
   return null;
  };
  return [...fs].sort((a,b)=>{
@@ -254,7 +267,7 @@ function applySort(fs){
   return dir*(av-bv);
  });
 }
-function visibleFiles(){const q=$('#search').value.trim().toLowerCase(),min=Number($('#minConfidence').value),scope=canonPath(S.scopeRoot),roots=[...(S.scopeSelections||new Set())].map(canonPath);let fs=S.files.filter(f=>{const fp=canonPath(f.path),dir=fp.replace(/\\[^\\]+$/,'');let inFocus=true;if(roots.length)inFocus=roots.some(r=>S.scopeRecursive?(dir===r||dir.startsWith(r+'\\')):dir===r);else if(S.scopeRecursive&&scope)inFocus=fp.startsWith(scope+'\\')||fp===scope;return inFocus&&(!q||f.name.toLowerCase().includes(q)||matchedObservation(f,q,min))&&passesMagnets(f)});if(S.semantic){const rank=new Map(S.semantic.map((x,i)=>[x.path,{i,score:x.score}]));fs=fs.filter(f=>rank.has(f.path)).sort((a,b)=>rank.get(a.path).i-rank.get(b.path).i)}if(S.compare){const rank=new Map(S.compare.results.map((x,i)=>[x.path,{i,score:x.score}]));if(S.compare.kind==='similar'||S.compare.kind==='duplicates')fs=fs.filter(f=>rank.has(f.path)).sort((a,b)=>rank.get(a.path).i-rank.get(b.path).i);else fs.sort((a,b)=>(rank.get(a.path)?.i??1e9)-(rank.get(b.path)?.i??1e9))}return applySort(fs)}
+function visibleFiles({ignoreCompare=false}={}){const q=$('#search').value.trim().toLowerCase(),min=Number($('#minConfidence').value),scope=canonPath(S.scopeRoot),roots=[...(S.scopeSelections||new Set())].map(canonPath);let fs=S.files.filter(f=>{const fp=canonPath(f.path),dir=fp.replace(/\\[^\\]+$/,'');let inFocus=true;if(roots.length)inFocus=roots.some(r=>S.scopeRecursive?(dir===r||dir.startsWith(r+'\\')):dir===r);else if(S.scopeRecursive&&scope)inFocus=fp.startsWith(scope+'\\')||fp===scope;return inFocus&&(!q||f.name.toLowerCase().includes(q)||matchedObservation(f,q,min))&&passesMagnets(f)});if(S.semantic){const rank=new Map(S.semantic.map((x,i)=>[x.path,{i,score:x.score}]));fs=fs.filter(f=>rank.has(f.path)).sort((a,b)=>rank.get(a.path).i-rank.get(b.path).i)}if(S.compare&&!ignoreCompare){const rank=new Map(S.compare.results.map((x,i)=>[x.path,{i,score:x.score}]));if(S.compare.kind==='similar'||S.compare.kind==='duplicates')fs=fs.filter(f=>rank.has(f.path)).sort((a,b)=>rank.get(a.path).i-rank.get(b.path).i);else fs.sort((a,b)=>(rank.get(a.path)?.i??1e9)-(rank.get(b.path)?.i??1e9))}return applySort(fs)}
 function detectorColor(provider,model){provider=String(provider||'');model=String(model||'');model=model.replace(/#conf=[0-9.]+$/,'');if(provider==='ultralytics-world')model=model.replace(/#vocab=[^#]+$/,'');let h=2166136261;for(const c of(provider+'|'+model)){h^=c.charCodeAt(0);h=Math.imul(h,16777619)}return `hsl(${Math.abs(h)%360} 78% 62%)`}
 function humanObservation(provider){return /^(human|user|manual)(?:$|[-_:])/i.test(String(provider||''))}
 function observationTextStyle(provider,model){return humanObservation(provider)?'class="humanObservation"':`style="color:${detectorColor(provider,model)}"`}
@@ -265,15 +278,23 @@ function geometrySvg(f){if(!S.boxes&&!S.masks)return'';const items=(f.observatio
 function syncGeometryViews(){document.querySelectorAll('.thumb').forEach(t=>{const img=t.querySelector('img'),svg=t.querySelector('svg');if(!img||!svg||svg.hasAttribute('viewBox'))return;const full=new Image();full.onload=()=>{if(full.naturalWidth&&full.naturalHeight)svg.setAttribute('viewBox',`0 0 ${full.naturalWidth} ${full.naturalHeight}`)};const card=t.closest('.card');if(card)full.src=`/api/file?path=${enc(card.dataset.p)}`})}
 function viewerGeometry(f){const oldB=S.boxes,oldM=S.masks;S.boxes=true;S.masks=true;const out=geometrySvg(f);S.boxes=oldB;S.masks=oldM;return out}
 function viewerObsId(o,i){return `obs-${i}`}
-async function refreshOne(path){const r=await post('/api/observations',{paths:[path]});const f=S.files.find(x=>x.path===path);if(f)f.observations=(r.observations||{})[path]||[];S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;render();return f}
+async function refreshOne(path){const r=await post('/api/observations',{paths:[path]});const f=S.files.find(x=>x.path===path);if(f)f.observations=(r.observations||{})[path]||[];S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(!S.viewer)render();return f}
 function editableObservations(f){return(f.observations||[]).filter(o=>o.kind!=='receipt'&&o.confidence>0&&(o.kind==='bbox'||o.kind==='mask'))}
 
 function maskRleEncode(mask){const out=[];for(let i=0;i<mask.length;){if(!mask[i]){i++;continue}const s=i;while(i<mask.length&&mask[i])i++;out.push(s,i-s)}return out}
 function maskRleDecode(rle,n){const a=new Uint8Array(n);for(let i=0;i<(rle||[]).length;i+=2)a.fill(1,rle[i],rle[i]+rle[i+1]);return a}
 function modelShortName(value){return String(value||'').replace(/\\/g,'/').split('/').pop().replace(/\.(?:pt|pth|onnx|safetensors|engine)$/i,'')}
 function geometryOf(o){try{return typeof o?.geometry==='string'?JSON.parse(o.geometry):o?.geometry}catch{return null}}
+// Explicit display size keeps both layers aligned without intrinsic-canvas feedback.
+function fitInspectorSurface(surface,stage,width,height){
+ const r=stage.getBoundingClientRect();if(!(width>0&&height>0&&r.width>0&&r.height>0))return;
+ const scale=Math.min(r.width/width,r.height/height),w=`${Math.max(1,width*scale)}px`,h=`${Math.max(1,height*scale)}px`;
+ if(surface.style.width!==w)surface.style.width=w;
+ if(surface.style.height!==h)surface.style.height=h;
+}
 function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
  const viewer=document.querySelector('#imageViewer .viewerPanel');if(!viewer)return;
+ const sourceImage=viewer.querySelector('.viewerSource');$('#imageViewer')._viewerResize?.disconnect();
  const saved=viewer.innerHTML;viewer.classList.add('maskCardMode');
  viewer.innerHTML=`<div class="maskPanel">
  <div class="maskHead"><b>Paint Mask · ${esc(concept)}</b><span class="tiny">${esc(origin?.provider||'Manual')} · ${esc(origin?.model||'New annotation')}</span><div class="maskHeadTools"><button id="maskCopy">Copy to Clipboard</button><button id="maskPaste">Paste from Clipboard</button><button id="maskClose">×</button></div></div>
@@ -285,10 +306,13 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
  <button id="maskUndo">Undo</button><button id="maskClear">Clear</button><div class="tiny">The crop is reference only. Existing segmentation loads automatically; box-only detections start transparent. Any nontransparent pasted pixel becomes mask. Clipboard images must exactly match this crop.</div></aside></div>
  <div class="maskFoot"><span id="maskInfo" class="tiny"></span><button id="maskCancel">Cancel</button><button id="maskSave">Save Mask</button></div></div>`;
  const host=viewer;
- const sourceCanvas=host.querySelector('#maskSourceCanvas'),sourceCtx=sourceCanvas.getContext('2d'),canvas=host.querySelector('#maskCanvas'),ctx=canvas.getContext('2d'),source=new Image();
+ const sourceCanvas=host.querySelector('#maskSourceCanvas'),sourceCtx=sourceCanvas.getContext('2d'),canvas=host.querySelector('#maskCanvas'),ctx=canvas.getContext('2d'),source=sourceImage||new Image();
  const x1=Math.round(bbox[0]),y1=Math.round(bbox[1]),x2=Math.round(bbox[2]),y2=Math.round(bbox[3]),w=x2-x1,h=y2-y1;
  if(w<1||h<1){viewer.innerHTML=saved;viewer.classList.remove('maskCardMode');return alert('Mask crop is empty.')}
  sourceCanvas.width=canvas.width=w;sourceCanvas.height=canvas.height=h;
+ const stack=host.querySelector('.maskCanvasStack'),stage=host.querySelector('.maskStage');
+ const fitCrop=()=>fitInspectorSurface(stack,stage,w,h);
+ const cropResize=new ResizeObserver(fitCrop);cropResize.observe(stage);$('#imageViewer')._maskResize=cropResize;fitCrop();
  let mask=new Uint8Array(w*h),undo=[],mode='paint',locked=false,down=false,last=null;
  // Stored geometry is authoritative. A YOLO polygon and a SAM RLE both
  // initialize the same editable crop, even when scope was not set to "mask".
@@ -296,7 +320,8 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
   const mw=Number(existing.mask_size[0]),mh=Number(existing.mask_size[1]);
   const decoded=maskRleDecode(existing.mask_rle,mw*mh);
   const ox=Math.round(Number(existing.bbox?.[0]??x1))-x1,oy=Math.round(Number(existing.bbox?.[1]??y1))-y1;
-  for(let yy=0;yy<mh;yy++)for(let xx=0;xx<mw;xx++)if(decoded[yy*mw+xx]){
+  if(mw===w&&mh===h&&ox===0&&oy===0)mask=decoded;
+  else for(let yy=0;yy<mh;yy++)for(let xx=0;xx<mw;xx++)if(decoded[yy*mw+xx]){
    const dx=xx+ox,dy=yy+oy;if(dx>=0&&dy>=0&&dx<w&&dy<h)mask[dy*w+dx]=1;
   }
  }else if(existing?.polygon?.length){
@@ -305,20 +330,25 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
   const a=x.getImageData(0,0,w,h).data;for(let i=0;i<mask.length;i++)mask[i]=a[i*4+3]>0?1:0;
  }
  const snapshot=()=>{undo.push(mask.slice());if(undo.length>8)undo.shift()};
+ const maskImage=ctx.createImageData(w,h);let maskedPixels=mask.reduce((a,b)=>a+b,0),dirty=[0,0,w,h],paintFrame=0;
+ function dirtyRect(xa,ya,xb,yb){xa=Math.max(0,Math.min(w,xa));ya=Math.max(0,Math.min(h,ya));xb=Math.max(0,Math.min(w,xb));yb=Math.max(0,Math.min(h,yb));if(xb<=xa||yb<=ya)return;dirty=dirty?[Math.min(dirty[0],xa),Math.min(dirty[1],ya),Math.max(dirty[2],xb),Math.max(dirty[3],yb)]:[xa,ya,xb,yb]}
+ function resetMaskDisplay(){maskedPixels=mask.reduce((a,b)=>a+b,0);dirty=[0,0,w,h];renderMask()}
  function renderMask(){
-  ctx.clearRect(0,0,w,h);
-  const im=ctx.createImageData(w,h),d=im.data;
-  for(let i=0;i<mask.length;i++)if(mask[i]){const q=i*4;d[q]=255;d[q+1]=70;d[q+2]=70;d[q+3]=255}
-  ctx.putImageData(im,0,0);
-  const opacity=Number(host.querySelector('#maskOpacity').value)/100,blend=host.querySelector('#maskBlend').value;
-  canvas.style.opacity=String(opacity);
-  canvas.style.mixBlendMode=blend==='normal'?'normal':blend;
-  host.querySelector('#maskInfo').textContent=`${w} × ${h} crop · ${mask.reduce((a,b)=>a+b,0).toLocaleString()} masked pixels`;
-  host.querySelector('#maskLocked').hidden=!locked;host.querySelector('#maskSave').disabled=locked;
+  if(paintFrame)return;paintFrame=requestAnimationFrame(()=>{
+   paintFrame=0;if(!canvas.isConnected)return;
+   if(dirty){const [xa,ya,xb,yb]=dirty,d=maskImage.data;dirty=null;
+    for(let yy=ya;yy<yb;yy++)for(let xx=xa;xx<xb;xx++){const index=yy*w+xx,q=index*4;d[q]=255;d[q+1]=70;d[q+2]=70;d[q+3]=mask[index]?255:0}
+    ctx.putImageData(maskImage,0,0,xa,ya,xb-xa,yb-ya);
+   }
+   canvas.style.opacity=String(Number(host.querySelector('#maskOpacity').value)/100);
+   canvas.style.mixBlendMode=host.querySelector('#maskBlend').value;
+   host.querySelector('#maskInfo').textContent=`${w} × ${h} crop · ${maskedPixels.toLocaleString()} masked pixels`;
+   host.querySelector('#maskLocked').hidden=!locked;host.querySelector('#maskSave').disabled=locked;
+  });
  }
  function renderSource(){sourceCtx.clearRect(0,0,w,h);sourceCtx.drawImage(source,x1,y1,w,h,0,0,w,h)}
  function pnt(e){const r=canvas.getBoundingClientRect();return[(e.clientX-r.left)*w/r.width,(e.clientY-r.top)*h/r.height]}
- function dab(x,y){const rad=Number(host.querySelector('#maskBrush').value)/2,xa=Math.max(0,Math.floor(x-rad)),xb=Math.min(w-1,Math.ceil(x+rad)),ya=Math.max(0,Math.floor(y-rad)),yb=Math.min(h-1,Math.ceil(y+rad)),val=mode==='paint'?1:0,rr=rad*rad;for(let yy=ya;yy<=yb;yy++)for(let xx=xa;xx<=xb;xx++)if((xx-x)**2+(yy-y)**2<=rr)mask[yy*w+xx]=val}
+ function dab(x,y){const rad=Number(host.querySelector('#maskBrush').value)/2,xa=Math.max(0,Math.floor(x-rad)),xb=Math.min(w-1,Math.ceil(x+rad)),ya=Math.max(0,Math.floor(y-rad)),yb=Math.min(h-1,Math.ceil(y+rad)),val=mode==='paint'?1:0,rr=rad*rad;for(let yy=ya;yy<=yb;yy++)for(let xx=xa;xx<=xb;xx++)if((xx-x)**2+(yy-y)**2<=rr){const index=yy*w+xx;if(mask[index]!==val){maskedPixels+=val?1:-1;mask[index]=val}}dirtyRect(xa,ya,xb+1,yb+1)}
  function stroke(a,b){const dx=b[0]-a[0],dy=b[1]-a[1],steps=Math.max(1,Math.ceil(Math.hypot(dx,dy)/(Math.max(1,Number(host.querySelector('#maskBrush').value)/4))));for(let i=0;i<=steps;i++)dab(a[0]+dx*i/steps,a[1]+dy*i/steps)}
  canvas.onpointerdown=e=>{if(locked)return;down=true;last=pnt(e);snapshot();dab(...last);canvas.setPointerCapture(e.pointerId);renderMask()};
  canvas.onpointermove=e=>{if(!down||locked)return;const q=pnt(e);stroke(last,q);last=q;renderMask()};
@@ -328,8 +358,8 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
  const brush=host.querySelector('#maskBrush');brush.oninput=()=>host.querySelector('#maskBrushValue').textContent=brush.value+' px';
  const opacity=host.querySelector('#maskOpacity');opacity.oninput=()=>{host.querySelector('#maskOpacityValue').textContent=opacity.value+'%';renderMask()};
  host.querySelector('#maskBlend').onchange=renderMask;
- host.querySelector('#maskUndo').onclick=()=>{if(locked||!undo.length)return;mask=undo.pop();renderMask()};
- host.querySelector('#maskClear').onclick=()=>{if(locked)return;snapshot();mask.fill(0);renderMask()};
+ host.querySelector('#maskUndo').onclick=()=>{if(locked||!undo.length)return;mask=undo.pop();resetMaskDisplay()};
+ host.querySelector('#maskClear').onclick=()=>{if(locked)return;snapshot();mask.fill(0);resetMaskDisplay()};
  async function copyMask(){try{
    const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d'),im=x.createImageData(w,h);
    for(let i=0;i<mask.length;i++)if(mask[i]){const q=i*4;im.data[q]=255;im.data[q+1]=255;im.data[q+2]=255;im.data[q+3]=255}
@@ -339,7 +369,7 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
  async function importBlob(blob){const bm=await createImageBitmap(blob);if(bm.width!==w||bm.height!==h){bm.close();throw new Error(`Clipboard image is ${bm.width}×${bm.height}; this mask crop is ${w}×${h}.`)}
   const c=document.createElement('canvas');c.width=w;c.height=h;const x=c.getContext('2d');x.clearRect(0,0,w,h);x.drawImage(bm,0,0);bm.close();
   const d=x.getImageData(0,0,w,h).data,next=new Uint8Array(w*h);for(let i=0;i<next.length;i++)next[i]=d[i*4+3]>0?1:0;
-  mask=next;undo=[];locked=false;renderMask()}
+  mask=next;undo=[];locked=false;resetMaskDisplay()}
  async function pasteMask(){try{const items=await navigator.clipboard.read();let blob=null;for(const item of items){const type=item.types.find(t=>t.startsWith('image/'));if(type){blob=await item.getType(type);break}}if(!blob)throw new Error('Clipboard does not contain an image.');await importBlob(blob)}catch(e){alert('Clipboard paste failed: '+e.message)}}
  host.querySelector('#maskCopy').onclick=copyMask;host.querySelector('#maskPaste').onclick=pasteMask;
  const onPaste=async e=>{if(!viewer.classList.contains('maskCardMode'))return;e.preventDefault();const item=[...e.clipboardData.items].find(x=>x.type.startsWith('image/'));if(!item)return alert('Clipboard does not contain an image.');try{await importBlob(item.getAsFile())}catch(err){alert('Clipboard paste failed: '+err.message)}};document.addEventListener('paste',onPaste);
@@ -348,18 +378,32 @@ function openMaskEditor({path,concept,bbox,existing=null,origin=null}){
  host.querySelector('#maskSave').onclick=async()=>{if(locked)return;const runs=maskRleEncode(mask);if(!runs.length)return alert('Mask is empty.');
   await post('/api/observations/teach',{path,concept,scope:'mask',geometry:{bbox:[x1,y1,x2,y2],mask_size:[w,h],mask_rle:runs,method:existing?.method||'manual'},provider:origin?.provider||null,model:origin?.model||null,confidence:origin?.confidence||null,replace_observation:origin?.kind==='mask'?{concept:origin.concept,provider:origin.provider,model:origin.model,kind:origin.kind,geometry:origin.geometry}:null});
   document.removeEventListener('paste',onPaste);viewer.classList.remove('maskCardMode');await refreshOne(path);openViewer(path);refreshDiscovered()};
- source.onload=()=>{renderSource();renderMask()};source.src='/api/file?path='+enc(path);
+ async function sourceReady(){try{if(source.decode)await source.decode();if(sourceCanvas.isConnected)renderSource()}catch(e){console.warn('Mask source decode failed',e)}}
+ if(source.complete&&source.naturalWidth)sourceReady();else{source.addEventListener('load',sourceReady,{once:true});if(!source.src)source.src='/api/file?path='+enc(path)}
  renderMask();host.querySelector('#maskCanvas')?.focus();
 }
-function openViewer(path){const f=S.files.find(x=>x.path===path);if(!f)return;S.viewer=path;let v=$('#imageViewer');if(!v){v=document.createElement('div');v.id='imageViewer';v.className='imageViewer';document.body.appendChild(v)}
- const obs=editableObservations(f);v.innerHTML=`<div class="viewerBackdrop"></div><div class="viewerPanel teachViewer" role="dialog" aria-modal="true"><div class="viewerDisplayTools"><button id="viewerStretchBtn" title="Use the available inspection workspace">Stretch</button><button id="viewerCleanBtn" title="Source pixels only; press again to restore the dirt">Clean</button><button id="viewerPrevBtn" title="Previous Multi-Work image">‹</button><button id="viewerNextBtn" title="Next Multi-Work image">›</button></div><button class="viewerClose">×</button><div class="viewerWork"><div class="viewerStage"><div class="viewerImageFrame"><img class="viewerSource" src="/api/file?path=${enc(path)}"><img class="viewerSavedMasks" src="/api/grid-overlay?path=${enc(path)}&kind=masks&rev=${S.obsRevision}" alt=""><svg class="teachOverlay" preserveAspectRatio="none"></svg></div></div><aside class="visionTeach"><h3>Correct / Teach</h3><div class="muted">Select a detection to reject or relabel it. Teach a new thing by drawing a box or using the entire image.</div><div class="subhead">Detections</div><div class="teachObs">${obs.map((o,i)=>`<button data-oi="${i}" title="${esc(o.provider)} · ${esc(o.model)}">${esc(o.concept)} · ${Math.round(o.confidence*100)}% <small>(${esc(modelShortName(o.model))})</small></button>`).join('')||'<span class="tiny">No box/mask detections.</span>'}</div><div id="teachSelected" class="tiny">No detection selected.</div><div class="buttonGrid"><button id="rejectObsBtn" disabled>Sorry, that isn't that</button><button id="relabelObsBtn" disabled>That's actually…</button></div><hr><input id="teachConcept" list="teachConceptList" placeholder="type or choose visual concept" autocomplete="off"><datalist id="teachConceptList">${S.discovered.map(x=>`<option value="${esc(x.concept||x)}"></option>`).join('')}</datalist><div class="teachGroundButtons"><button id="teachWholeBtn" title="Record image-level evidence instead of a localized box.">Entire Image</button><button id="paintMaskBtn" title="Paint a binary mask. Uses the selected box as its crop, or edits a selected mask.">Paint Mask</button><button id="samMaskBtn" title="Ask SAM for a first-draft mask from the selected box, then edit it here.">SAM Mask</button></div><div id="teachHint" class="tiny" title="Typing or choosing a concept switches the image into bounding mode. Drag directly over the image to teach an instance.">Choose a concept to enter bounding mode.</div></aside></div><div class="viewerCaption">${esc(f.name)}<input class="inspectorPath" aria-label="Absolute image path" readonly value="${esc(path)}" style="display:block;width:100%;user-select:text" onclick="this.select()"></div></div>`;v.classList.add('open');installViewerDisplayControls(v,path);
- const img=v.querySelector('.viewerSource'),svg=v.querySelector('.teachOverlay'),frame=v.querySelector('.viewerImageFrame'),stage=v.querySelector('.viewerStage');let selected=null,drawing=false,startPt=null,temp=null;
- function setVB(){if(!img.naturalWidth||!img.naturalHeight)return;svg.setAttribute('viewBox',`0 0 ${img.naturalWidth} ${img.naturalHeight}`);const r=stage.getBoundingClientRect(),scale=Math.min(r.width/img.naturalWidth,r.height/img.naturalHeight);frame.style.width=`${Math.max(1,img.naturalWidth*scale)}px`;frame.style.height=`${Math.max(1,img.naturalHeight*scale)}px`}
+function acceptTaughtBox(observations,geometries,taught,geometry){
+ const index=observations.findIndex((o,i)=>o.concept===taught.concept&&o.provider===taught.provider&&o.model===taught.model&&o.kind==='bbox'&&JSON.stringify(geometries[i]?.bbox)===JSON.stringify(geometry.bbox));
+ if(index>=0){observations[index]=taught;geometries[index]=geometry;return index;}
+ observations.push(taught);geometries.push(geometry);return observations.length-1;
+}
+const inspectorSources=new Map();
+function openViewer(path,{selectBox=null,selectConcept=null}={}){observationRefreshController?.abort();for(const e of thumbAssets.values())if(e.state==='loading')e.controller?.abort();gridActivity('inspector-open');const f=S.files.find(x=>x.path===path);if(!f)return;S.viewer=path;let v=$('#imageViewer');if(!v){v=document.createElement('div');v.id='imageViewer';v.className='imageViewer';document.body.appendChild(v)}
+ const obs=editableObservations(f),geometries=obs.map(geometryOf);v.innerHTML=`<div class="viewerBackdrop"></div><div class="viewerPanel teachViewer" role="dialog" aria-modal="true"><div class="viewerDisplayTools"><button id="viewerStretchBtn" title="Use the available inspection workspace">Stretch</button><button id="viewerCleanBtn" title="Source pixels only; press again to restore the dirt">Clean</button><button id="viewerPrevBtn" title="Previous Multi-Work image">‹</button><button id="viewerNextBtn" title="Next Multi-Work image">›</button></div><button class="viewerClose">×</button><div class="viewerWork"><div class="viewerStage"><div class="viewerImageFrame"><img class="viewerSource" fetchpriority="high" decoding="async"><img class="viewerSavedMasks" alt=""><svg class="teachOverlay" preserveAspectRatio="none"></svg></div></div><aside class="visionTeach"><h3>Correct / Teach</h3><div class="muted">Select a detection to reject or relabel it. Teach a new thing by drawing a box or using the entire image.</div><div class="subhead">Detections</div><div class="teachObs">${obs.map((o,i)=>`<button data-oi="${i}" title="${esc(o.provider)} · ${esc(o.model)}">${esc(o.concept)} · ${Math.round(o.confidence*100)}% <small>(${esc(modelShortName(o.model))})</small></button>`).join('')||'<span class="tiny">No box/mask detections.</span>'}</div><div id="teachSelected" class="tiny">No detection selected.</div><div class="buttonGrid"><button id="rejectObsBtn" disabled>Sorry, that isn't that</button><button id="relabelObsBtn" disabled>That's actually…</button></div><hr><input id="teachConcept" list="teachConceptList" placeholder="type or choose visual concept" autocomplete="off"><datalist id="teachConceptList">${S.discovered.map(x=>`<option value="${esc(x.concept||x)}"></option>`).join('')}</datalist><div class="teachGroundButtons"><button id="teachWholeBtn" title="Record image-level evidence instead of a localized box.">Entire Image</button><button id="paintMaskBtn" title="Paint a binary mask. Uses the selected box as its crop, or edits a selected mask.">Paint Mask</button><button id="samMaskBtn" title="Ask SAM for a first-draft mask from the selected box, then edit it here.">SAM Mask</button></div><div id="teachHint" class="tiny" title="Typing or choosing a concept switches the image into bounding mode. Drag directly over the image to teach an instance.">Choose a concept to enter bounding mode.</div></aside></div><div class="viewerCaption">${esc(f.name)}<input class="inspectorPath" aria-label="Absolute image path" readonly value="${esc(path)}" style="display:block;width:100%;user-select:text" onclick="this.select()"></div></div>`;v.classList.add('open');installViewerDisplayControls(v,path);
+ v._maskResize?.disconnect();
+ const sourceKey=path+'|'+(f.mtime||0)+'|'+(S.gridRedrawEpoch||0);
+ let img=v.querySelector('.viewerSource');
+ const cached=inspectorSources.get(sourceKey);if(cached?.complete&&cached.naturalWidth)img.replaceWith(img=cached);
+ else{img.src='/api/file?path='+enc(path);img.addEventListener('load',()=>{inspectorSources.delete(sourceKey);inspectorSources.set(sourceKey,img);while(inspectorSources.size>2)inspectorSources.delete(inspectorSources.keys().next().value)},{once:true})}
+ const svg=v.querySelector('.teachOverlay'),frame=v.querySelector('.viewerImageFrame'),stage=v.querySelector('.viewerStage');let selected=null,drawing=false,startPt=null,temp=null,boxSaving=false;
+ function setVB(){if(!img.naturalWidth||!img.naturalHeight)return;svg.setAttribute('viewBox',`0 0 ${img.naturalWidth} ${img.naturalHeight}`);fitInspectorSurface(frame,stage,img.naturalWidth,img.naturalHeight)}
  img.addEventListener('load',setVB);const viewerResize=new ResizeObserver(setVB);viewerResize.observe(stage);v._viewerResize?.disconnect();v._viewerResize=viewerResize;setVB();
- function drawExisting(){if(!img.naturalWidth)return;setVB();svg.innerHTML='';obs.forEach((o,i)=>{let g;try{g=typeof o.geometry==='string'?JSON.parse(o.geometry):o.geometry}catch{return}if(!g?.bbox)return;const [x1,y1,x2,y2]=g.bbox;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('x',x1);r.setAttribute('y',y1);r.setAttribute('width',x2-x1);r.setAttribute('height',y2-y1);r.setAttribute('class',`teachExisting ${selected===i?'active':''}`);r.style.stroke=selected===i?'#ffd45a':detectorColor(o.provider,o.model);r.dataset.oi=i;r.onclick=e=>{e.stopPropagation();choose(i)};svg.appendChild(r)})}
- img.addEventListener('load',drawExisting,{once:true});
- function choose(i){selected=Number(i);const o=obs[selected];v.querySelectorAll('.teachObs button').forEach(b=>b.classList.toggle('active',Number(b.dataset.oi)===selected));$('#teachSelected').textContent=`${o.concept} · ${o.provider} · ${o.model}`;$('#rejectObsBtn').disabled=false;$('#relabelObsBtn').disabled=false;drawExisting()}
+ function drawExisting(){if(!img.naturalWidth)return;setVB();svg.innerHTML='';obs.forEach((o,i)=>{const g=geometries[i];if(!g?.bbox)return;const [x1,y1,x2,y2]=g.bbox;const r=document.createElementNS('http://www.w3.org/2000/svg','rect');r.setAttribute('x',x1);r.setAttribute('y',y1);r.setAttribute('width',x2-x1);r.setAttribute('height',y2-y1);r.setAttribute('class',`teachExisting ${selected===i?'active':''}`);r.style.stroke=selected===i?'#ffd45a':detectorColor(o.provider,o.model);r.dataset.oi=i;r.onclick=e=>{e.stopPropagation();choose(i)};svg.appendChild(r)})}
+ function sourceReady(){drawExisting();const overlay=v.querySelector('.viewerSavedMasks');if(overlay&&obs.some(o=>o.kind==='mask')){overlay.fetchPriority='low';overlay.src='/api/grid-overlay?path='+enc(path)+'&kind=masks&rev='+S.obsRevision}}
+ img.addEventListener('load',sourceReady,{once:true});if(img.complete&&img.naturalWidth)sourceReady();
+ function choose(i){selected=Number(i);const o=obs[selected];v.querySelectorAll('.teachObs button').forEach(b=>b.classList.toggle('active',Number(b.dataset.oi)===selected));$('#teachSelected').textContent=`${o.concept} · ${o.provider} · ${o.model}`;$('#rejectObsBtn').disabled=false;$('#relabelObsBtn').disabled=false;gridActivity('inspector-select');svg.querySelectorAll('.teachExisting').forEach(r=>{const index=Number(r.dataset.oi);r.classList.toggle('active',selected===index);r.style.stroke=selected===index?'#ffd45a':detectorColor(obs[index].provider,obs[index].model)})}
  v.querySelectorAll('.teachObs button').forEach(b=>b.onclick=()=>choose(b.dataset.oi));
+ if(selectBox){const index=obs.findIndex((o,i)=>o.concept===selectConcept&&geometries[i]?.bbox?.every((n,k)=>Math.abs(n-selectBox[k])<.001));if(index>=0)choose(index)}
  async function correct(action){if(selected===null)return;const o=obs[selected];let corrected=null;if(action==='relabel'){corrected=prompt(`What is this ${o.concept}, actually?`,'');if(!corrected?.trim())return}await post('/api/observations/correct',{path,concept:o.concept,provider:o.provider,model:o.model,kind:o.kind,geometry:o.geometry??null,action,corrected_concept:corrected});await refreshOne(path);openViewer(path);refreshDiscovered()}
  $('#rejectObsBtn').onclick=()=>correct('reject');$('#relabelObsBtn').onclick=()=>correct('relabel');
  $('#teachWholeBtn').onclick=async()=>{const concept=$('#teachConcept').value.trim();if(!concept)return alert('Name the new visual concept first.');await post('/api/observations/teach',{path,concept,scope:'image'});await refreshOne(path);openViewer(path);refreshDiscovered()};
@@ -395,13 +439,41 @@ function openViewer(path){const f=S.files.find(x=>x.path===path);if(!f)return;S.
  };
  function point(e){const ctm=svg.getScreenCTM();if(!ctm)return[0,0];const p=new DOMPoint(e.clientX,e.clientY).matrixTransform(ctm.inverse()),vb=svg.viewBox.baseVal;return[Math.max(vb.x,Math.min(vb.x+vb.width,p.x)),Math.max(vb.y,Math.min(vb.y+vb.height,p.y))]}
  const conceptInput=$('#teachConcept');function syncBoundingMode(){drawing=!!conceptInput.value.trim();$('#teachHint').textContent=drawing?'Bounding mode · drag over the image.':'Choose a concept to enter bounding mode.';svg.classList.toggle('drawing',drawing)}conceptInput.addEventListener('input',syncBoundingMode);conceptInput.addEventListener('change',syncBoundingMode);syncBoundingMode();
- svg.onpointerdown=e=>{if(!drawing)return;startPt=point(e);temp=document.createElementNS('http://www.w3.org/2000/svg','rect');temp.setAttribute('class','teachDraft');svg.appendChild(temp);svg.setPointerCapture(e.pointerId)};
+ svg.onpointerdown=e=>{if(!drawing||boxSaving||!img.naturalWidth)return;startPt=point(e);temp=document.createElementNS('http://www.w3.org/2000/svg','rect');temp.setAttribute('class','teachDraft');svg.appendChild(temp);svg.setPointerCapture(e.pointerId)};
  svg.onpointermove=e=>{if(!drawing||!startPt||!temp)return;const q=point(e),x=Math.min(startPt[0],q[0]),y=Math.min(startPt[1],q[1]);temp.setAttribute('x',x);temp.setAttribute('y',y);temp.setAttribute('width',Math.abs(q[0]-startPt[0]));temp.setAttribute('height',Math.abs(q[1]-startPt[1]))};
- svg.onpointerup=async e=>{if(!drawing||!startPt)return;const q=point(e),box=[Math.min(startPt[0],q[0]),Math.min(startPt[1],q[1]),Math.max(startPt[0],q[0]),Math.max(startPt[1],q[1])],concept=$('#teachConcept').value.trim();drawing=false;startPt=null;svg.classList.remove('drawing');await post('/api/observations/teach',{path,concept,scope:'bbox',geometry:{bbox:box}});await refreshOne(path);openViewer(path);refreshDiscovered()};
+ svg.onpointerup=async e=>{
+  if(!drawing||!startPt||boxSaving)return;
+  const q=point(e),box=[Math.min(startPt[0],q[0]),Math.min(startPt[1],q[1]),Math.max(startPt[0],q[0]),Math.max(startPt[1],q[1])],concept=conceptInput.value.trim(),draft=temp;
+  startPt=null;temp=null;drawing=false;boxSaving=true;svg.classList.remove('drawing');
+  if(svg.hasPointerCapture(e.pointerId))svg.releasePointerCapture(e.pointerId);
+  $('#teachHint').textContent='Saving box…';
+  try{
+   if(box[2]-box[0]<1||box[3]-box[1]<1)throw new Error('Box is empty.');
+   const result=await post('/api/observations/teach',{path,concept,scope:'bbox',geometry:{bbox:box}});
+   const taught={path,concept:result.concept,confidence:1,provider:'human-teach',model:'concept-bank',kind:'bbox',geometry:JSON.stringify(result.geometry)};
+   // Use the canonical save receipt: no second query, image reload or viewer rebuild.
+   const index=acceptTaughtBox(obs,geometries,taught,result.geometry);
+   f.observations=(f.observations||[]).filter(o=>!(o.provider===taught.provider&&o.model===taught.model&&o.kind==='bbox'&&o.concept===taught.concept&&JSON.stringify(geometryOf(o)?.bbox)===JSON.stringify(result.geometry.bbox)));
+   f.observations.push(taught);
+   if(S.viewer===path&&v.querySelector('.teachOverlay')===svg){
+    const list=v.querySelector('.teachObs');list.querySelector('.tiny')?.remove();
+    if(!list.querySelector(`button[data-oi="${index}"]`)){
+     const button=document.createElement('button');button.dataset.oi=index;button.textContent=`${taught.concept} · 100% (concept-bank)`;button.title='human-teach · concept-bank';button.onclick=()=>choose(index);list.appendChild(button);
+    }
+    const existingRect=svg.querySelector(`.teachExisting[data-oi="${index}"]`),rect=existingRect||draft||document.createElementNS('http://www.w3.org/2000/svg','rect');
+    if(existingRect&&draft!==existingRect)draft?.remove();
+    const [xa,ya,xb,yb]=result.geometry.bbox;rect.setAttribute('x',xa);rect.setAttribute('y',ya);rect.setAttribute('width',xb-xa);rect.setAttribute('height',yb-ya);rect.setAttribute('class','teachExisting');rect.dataset.oi=index;rect.onclick=event=>{event.stopPropagation();choose(index)};if(!rect.parentNode)svg.appendChild(rect);
+    choose(index);$('#teachHint').textContent='Box saved · selected for Paint Mask or SAM Mask.';
+   }
+   S._teachDiscoveryDirty=true;
+   if(!S.discovered.some(x=>(x.concept||x)===taught.concept))S.discovered.push({concept:taught.concept,provider:taught.provider,model:taught.model});
+  }catch(error){draft?.remove();if(S.viewer===path&&v.querySelector('.teachOverlay')===svg){syncBoundingMode();$('#teachHint').textContent='Box was not saved: '+error.message;}}
+  finally{boxSaving=false;}
+ };
  v.querySelector('.viewerClose').onclick=closeViewer;v.querySelector('.viewerBackdrop').onclick=closeViewer}
 function installViewerDisplayControls(v,path){const panel=v.querySelector('.viewerPanel');if(!panel)return;panel.classList.toggle('viewerStretch',S.viewerStretch);panel.classList.toggle('viewerClean',S.viewerClean);const stretch=v.querySelector('#viewerStretchBtn'),clean=v.querySelector('#viewerCleanBtn'),prev=v.querySelector('#viewerPrevBtn'),next=v.querySelector('#viewerNextBtn');if(stretch){stretch.classList.toggle('active',S.viewerStretch);stretch.onclick=()=>{S.viewerStretch=!S.viewerStretch;panel.classList.toggle('viewerStretch',S.viewerStretch);stretch.classList.toggle('active',S.viewerStretch)}}if(clean){clean.classList.toggle('active',S.viewerClean);clean.onclick=()=>{S.viewerClean=!S.viewerClean;panel.classList.toggle('viewerClean',S.viewerClean);clean.classList.toggle('active',S.viewerClean)}}const multi=S.multiWork.length>1;if(prev){prev.hidden=!multi;prev.onclick=()=>stepMulti(-1)}if(next){next.hidden=!multi;next.onclick=()=>stepMulti(1)}}
 function stepMulti(delta){if(!S.multiWork.length)return;S.multiIndex=(S.multiIndex+delta+S.multiWork.length)%S.multiWork.length;openViewer(S.multiWork[S.multiIndex])}
-function closeViewer(){const v=$('#imageViewer');if(v){v._viewerResize?.disconnect();v.classList.remove('open');}S.viewer=null}
+function closeViewer(){const v=$('#imageViewer');if(v){v._viewerResize?.disconnect();v._maskResize?.disconnect();v.classList.remove('open');}S.viewer=null;prepareNeighborhood();pumpRowPrep();scheduleRingPaint();if(S._teachDiscoveryDirty){S._teachDiscoveryDirty=false;refreshDiscovered()}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.viewer)closeViewer()});
 function qualityScore(f){
  const q=(f.observations||[]).filter(o=>o.kind==='quality'&&o.concept==='quality').sort((a,b)=>{
@@ -482,10 +554,10 @@ function thumbnailFetch(url, options={}){
 }
 function ensureThumbAsset(url){
  let e=thumbAssets.get(url);if(e){e.touched=performance.now();return e.promise}
- e={state:'loading',objectUrl:null,touched:performance.now(),promise:null};
- e.promise=thumbnailFetch(url,{cache:'force-cache'}).then(r=>{if(!r.ok)throw new Error(`thumb ${r.status}`);return r.blob()}).then(blob=>{
+ e={state:'loading',objectUrl:null,touched:performance.now(),promise:null,controller:new AbortController()};
+ e.promise=thumbnailFetch(url,{cache:'force-cache',signal:e.controller.signal}).then(r=>{if(!r.ok)throw new Error(`thumb ${r.status}`);return r.blob()}).then(blob=>{
    e.objectUrl=URL.createObjectURL(blob);e.state='ready';thumbAssets.delete(url);thumbAssets.set(url,e);trimThumbAssets();return e.objectUrl
- }).catch(err=>{thumbAssets.delete(url);throw err});
+ }).catch(err=>{if(thumbAssets.get(url)===e)thumbAssets.delete(url);throw err});
  thumbAssets.set(url,e);return e.promise;
 }
 async function hydratePrefabImage(im){
@@ -495,7 +567,7 @@ async function hydratePrefabImage(im){
  try{const objectUrl=await ensureThumbAsset(url);if(im.dataset.thumbHydrated!==url){im.src=objectUrl;im.dataset.thumbHydrated=url}
    if(!im.complete)await new Promise(resolve=>{im.addEventListener('load',resolve,{once:true});im.addEventListener('error',resolve,{once:true})});
    if(im.naturalWidth&&im.decode)try{await im.decode()}catch(e){};return !!im.naturalWidth
- }catch(e){im.dataset.thumbFailed=url;return false}
+ }catch(e){im.dataset.thumbFailed=url;if(e.name==='AbortError')im.dataset.thumbAborted='1';return false}
 }
 function rowKey(spec){return spec.map(x=>`${x.f.path}\u001f${x.f.mtime||0}\u001f${x.f._n8Tombstone?'farm':x.f._n8ForwardTo?'forward':'live'}`).join('\u001e')}
 function rowReady(ri){const v=S.virtualGrid,n=v.rows.length;if(!n)return false;const spec=v.rows[mod(ri,n)],e=v.rowReady.get(rowKey(spec));return e?.state==='ready'&&!!e.node}
@@ -507,6 +579,7 @@ function prepareRow(ri){
    const row=bindRingRow(null,spec,ri),imgs=[...row.querySelectorAll('img')];
    await Promise.all(imgs.map(hydratePrefabImage));
    if(generation!==v.prepGeneration||v.rowReady.get(key)!==entry)return false;
+   if(S.viewer||imgs.some(im=>im.dataset.thumbAborted==='1')){v.rowReady.delete(key);return false;}
    // If the read head moved away while this row was cooking, release the whole constructed row now.
    if(!v.prepDesired.has(key)){v.rowReady.delete(key);return false}
    entry.node=row;entry.state='ready';scheduleRingPaint();return true;
@@ -514,6 +587,7 @@ function prepareRow(ri){
  v.rowReady.set(key,entry);return entry.promise;
 }
 function pumpRowPrep(){
+ if(S.viewer)return;
  const v=S.virtualGrid,limit=3;
  while(v.prepActive<limit&&v.prepQueue.length){
   const ri=v.prepQueue.shift(),n=v.rows.length;if(!n)break;const key=rowKey(v.rows[mod(ri,n)]);
@@ -571,6 +645,7 @@ function positionRingPool(){
 // I.2t-d: placeholders belong to the cached layout. Scrolling and buffer
 // eviction never retire records or repack rows; ordinary layout rebuilds do.
 function paintRing(){
+ if(S.viewer)return;
  // Reconcile a renamed filename only after its old card has left the hot DOM.
  // Never restart the archive browse or resort while the user is looking at it.
  if(S._n8LazyRenames?.size){
@@ -693,12 +768,15 @@ async function startQuality(){
   if(r.state!=='done')$('#status').textContent=`Sanity ${r.id}: inspecting ${r.total||S.files.length} image${(r.total||S.files.length)===1?'':'s'}`;
  }catch(e){console.warn('Sanity start failed',e)}
 }
+let observationRefreshController=null;
 async function refreshObservations(preserveLayout=false){
- if(!S.files.length)return;
+ if(!S.files.length||S.viewer)return;
+ const controller=new AbortController();observationRefreshController?.abort();observationRefreshController=controller;
  try{
   // Observation refresh is background telemetry. Never route a transient/empty response
   // through post(), whose alert is appropriate for explicit user actions.
-  const r=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:S.files.map(x=>x.path)})});
+  const r=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:S.files.map(x=>x.path)}),signal:controller.signal});
+  if(S.viewer)return;
   const map=r.observations||{};
   S.files.forEach(f=>{if(Object.prototype.hasOwnProperty.call(map,f.path))f.observations=map[f.path]});
   S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(preserveLayout){
@@ -711,10 +789,10 @@ async function refreshObservations(preserveLayout=false){
    }
    refreshSelectionUI();
   }else render();refreshDiscovered();
- }catch(e){console.warn('Observation refresh failed' ,e)}
+ }catch(e){if(e.name!=='AbortError')console.warn('Observation refresh failed',e)}finally{if(observationRefreshController===controller)observationRefreshController=null}
 }
 function fmtEta(sec){if(sec==null||!isFinite(sec))return'';sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),q=sec%60;return h?`${h}h ${m}m ETA`:m?`${m}m ${q}s ETA`:`${q}s ETA`}
-async function refreshJobsCore(){const r=await j('/api/jobs');const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!active&&Number(r.observation_revision||0)>Number(String(S.obsRevision).split('-')[0])){invalidateVisibleAssets();await refreshObservations(true);S.obsRevision=String(r.observation_revision||S.obsRevision).split('-')[0]+'-'+assetEpoch}return active}
+async function refreshJobsCore(){const r=await j('/api/jobs');const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!active&&!S.viewer&&Number(r.observation_revision||0)>Number(String(S.obsRevision).split('-')[0])){invalidateVisibleAssets();await refreshObservations(true);S.obsRevision=String(r.observation_revision||S.obsRevision).split('-')[0]+'-'+assetEpoch}return active}
 
 // P.47: the job seeker is unemployed until there is work. One settling read is allowed;
 // polling exists only while queued/running jobs exist. Creating/stopping/dispatching work calls
@@ -783,7 +861,7 @@ function toggleGeometry(which){S[which]=!S[which];const b=$(which==='boxes'?'#bo
 
 function applyUiScale(v){v=Math.max(70,Math.min(140,Number(v)||100));const k=v/100,r=document.documentElement.style;r.setProperty('--rail',Math.round(300*k)+'px');r.setProperty('--rail-pad',Math.round(12*k)+'px');r.setProperty('--rail-section-pad',Math.round(10*k)+'px');r.setProperty('--control-py',Math.max(3,Math.round(6*k))+'px');r.setProperty('--control-px',Math.max(5,Math.round(9*k))+'px');r.setProperty('--input-pad',Math.max(4,Math.round(7*k))+'px');r.setProperty('--rail-font',Math.max(10,Math.round(14*k))+'px');const out=$('#uiScaleValue'),slider=$('#uiScale');if(out)out.textContent=v+'%';if(slider&&Number(slider.value)!==v)slider.value=v;localStorage.setItem('n8visionUiScale',String(v))}
 async function openSettings(){document.getElementById('rail')?.classList.remove('railOpen');document.getElementById('railBackdrop')?.setAttribute('hidden','');document.getElementById('railToggle')?.setAttribute('aria-expanded','false');refreshCheckpointLibraryStatus();
- $('#settingsDrawer').classList.add('open');$('#settingsDrawer').setAttribute('aria-hidden','false');updateDefaultRootLabel();updateThumbnailCacheLabel();const gd=$('#gridDetailSetting');if(gd)gd.value=S.gridDetail;const gg=$('#gridGapSetting');if(gg){gg.value=S.gridGapTenths;$('#gridGapValue').textContent=(S.gridGapTenths/10).toFixed(1)+'vw';}const sb=$('#sanityBadgeSetting');if(sb)sb.value=S.sanityBadges;const ig=$('#imageGridEnabled');if(ig)ig.checked=S.imageGridEnabled;const uu=$('#uncappedUnsanity');if(uu)uu.checked=S.uncappedUnsanity;if(S.path)refreshStorageClass();refreshPromptTranslatorChoices();
+ $('#settingsDrawer').classList.add('open');$('#settingsDrawer').setAttribute('aria-hidden','false');updateDefaultRootLabel();updateThumbnailCacheLabel();const gd=$('#gridDetailSetting');if(gd)gd.value=S.gridDetail;const gg=$('#gridGapSetting');if(gg){gg.value=S.gridGapTenths;$('#gridGapValue').textContent=(S.gridGapTenths/10).toFixed(1)+'vw';}applyBadgeVisibility();const sb=$('#sanityBadgeSetting');if(sb)sb.value=S.sanityBadges;const ig=$('#imageGridEnabled');if(ig)ig.checked=S.imageGridEnabled;const uu=$('#uncappedUnsanity');if(uu)uu.checked=S.uncappedUnsanity;if(S.path)refreshStorageClass();refreshPromptTranslatorChoices();
  try{const n=await j('/api/network/status');$('#enableLan').checked=n.enable_lan;$('#persistentCredentials').checked=n.persistent_credentials;$('#networkRestart').textContent=`LAN address: ${n.lan_ip}:${n.port}`;}catch(e){$('#networkRestart').textContent=e.message};refreshPairedDevices();refreshPublicPortal();refreshAdminStatus()
 }
 async function refreshPromptTranslatorChoices(){
@@ -836,7 +914,7 @@ const softCtrl=$('#softCtrl'),softShift=$('#softShift');if(softCtrl)softCtrl.onc
 const ticker=$('#interactionTicker'),help=$('#interactionHelp'),helpClose=$('#interactionHelpClose');if(ticker)ticker.onclick=()=>{help.hidden=!help.hidden};if(helpClose)helpClose.onclick=()=>help.hidden=true;
 document.addEventListener('keydown',e=>{const editable=e.target?.matches?.('input,textarea,select,[contenteditable=true]');if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();toggleImageGrid();return}if(e.key==='Escape'&&!S.viewer){S.selected.clear();S.selectionAnchor=null;refreshSelectionUI()}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'&&!S.viewer&&!editable){e.preventDefault();visibleFiles().forEach(f=>S.selected.add(f.path));refreshSelectionUI()}if(e.key==='Delete'&&!S.viewer&&!editable&&S.selected.size){e.preventDefault();deleteSelected().catch(err=>alert(err.message))}});
 (function installLasso(){const grid=$('#grid');if(!grid)return;let drag=null,box=null,startSelection=null;grid.addEventListener('pointerdown',e=>{const ctrl=e.ctrlKey||e.metaKey||S.softCtrl;if(!ctrl||e.button!==0)return;e.preventDefault();const r=grid.getBoundingClientRect();drag={id:e.pointerId,x:e.clientX,y:e.clientY,grid:r,moved:false};startSelection=new Set(S.selected);box=document.createElement('div');box.className='selectionLasso';document.body.appendChild(box);grid.setPointerCapture(e.pointerId)});grid.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4)drag.moved=true;const x1=Math.min(drag.x,e.clientX),y1=Math.min(drag.y,e.clientY),x2=Math.max(drag.x,e.clientX),y2=Math.max(drag.y,e.clientY);Object.assign(box.style,{left:x1+'px',top:y1+'px',width:(x2-x1)+'px',height:(y2-y1)+'px'});S.selected=new Set(startSelection);document.querySelectorAll('#grid .card').forEach(c=>{const r=c.getBoundingClientRect();if(r.right>=x1&&r.left<=x2&&r.bottom>=y1&&r.top<=y2)S.selected.add(c.dataset.p)});document.querySelectorAll('#grid .card').forEach(c=>c.classList.toggle('selected',S.selected.has(c.dataset.p)));$('#selCount').textContent=S.selected.size});const end=e=>{if(!drag||drag.id!==e.pointerId)return;const wasMoved=drag.moved;if(wasMoved)S.suppressClickUntil=performance.now()+250;drag=null;if(box)box.remove();box=null;consumeSoftModifiers();render()};grid.addEventListener('pointerup',end);grid.addEventListener('pointercancel',end)})();
-$('#regenerateBtn').oncontextmenu=e=>{e.preventDefault();deleteRefineRecipe()};$('#locationBar').onclick=()=>setTree(!S.treeOpen);$('#boxesBtn').onclick=()=>toggleGeometry('boxes');$('#masksBtn').onclick=()=>toggleGeometry('masks');$('#filtersBtn').onclick=()=>setDrawer(!S.drawer);$('#sortKey').onchange=e=>{S.sortKey=e.target.value;render()};$('#sortDir').onclick=()=>{S.sortDir=S.sortDir==='asc'?'desc':'asc';$('#sortDir').textContent=S.sortDir==='asc'?'↑':'↓';render()};$('#tagSearch').oninput=renderTagResults;$('#clearFiltersBtn').onclick=()=>{S.magnets.clear();S.magnetSeq=0;$('#tagSearch').value='';renderMagnets();renderTagResults();render()};$('#goBtn').onclick=()=>scanCurrent();$('#path').oninput=updateScanButton;$('#path').onkeydown=e=>{if(e.key==='Enter')browseOnly($('#path').value,'path-enter')};$('#upBtn').onclick=()=>S.parent&&navigateTo(S.parent,false,'parent-focus');$('#recursive').onchange=async()=>{if(!S.scopeRoot)return;const want=$('#recursive').checked,registered=(S.archiveRoots||[]).some(r=>canonPath(r)===canonPath(S.scopeRoot));if(want&&!registered){$('#recursive').checked=false;$('#status').textContent='Recursive archival begins with Scan.';return}if(want&&!S.catalogRecursive){const keep=[...S.scopeSelections];await load(S.scopeRoot,false,'recursive-toggle');S.scopeSelections=new Set(keep);S.scopeRecursive=true;renderFolderSelection();render();return}S.scopeRecursive=want;render();$('#status').textContent=`${want?'Recursive':'Direct'} view · ${visibleFiles().length.toLocaleString()} shown`};$('#search').oninput=render;$('#minConfidence').oninput=e=>{$('#minConfidenceValue').textContent=Math.round(e.target.value*100)+'%';render()};$('#thumbSize').oninput=e=>{document.documentElement.style.setProperty('--thumb',e.target.value+'px');S.virtualGrid.start=S.virtualGrid.end=-1;invalidateRingLayout();scheduleVirtualGrid()};$('#thumbSize').onchange=()=>render();$('#selectShownBtn').onclick=()=>{visibleFiles().forEach(f=>S.selected.add(f.path));refreshSelectionUI()};
+$('#regenerateBtn').oncontextmenu=e=>{e.preventDefault();deleteRefineRecipe()};$('#locationBar').onclick=()=>setTree(!S.treeOpen);$('#boxesBtn').onclick=()=>toggleGeometry('boxes');$('#masksBtn').onclick=()=>toggleGeometry('masks');$('#filtersBtn').onclick=()=>setDrawer(!S.drawer);$('#sortKey').onchange=async e=>{const key=e.target.value;if(key==='similarity'&&S.compare?.kind!=='similar'){e.target.value=S.sortKey;return $('#similarBtn').onclick()}if(key==='uniqueness'&&S.compare?.kind!=='unique'){e.target.value=S.sortKey;return $('#uniqueBtn').onclick()}S.sortKey=key;render()};$('#sortDir').onclick=()=>{S.sortDir=S.sortDir==='asc'?'desc':'asc';$('#sortDir').textContent=S.sortDir==='asc'?'↑':'↓';render()};$('#tagSearch').oninput=renderTagResults;$('#clearFiltersBtn').onclick=()=>{S.magnets.clear();S.magnetSeq=0;$('#tagSearch').value='';renderMagnets();renderTagResults();render()};$('#goBtn').onclick=()=>scanCurrent();$('#path').oninput=updateScanButton;$('#path').onkeydown=e=>{if(e.key==='Enter')browseOnly($('#path').value,'path-enter')};$('#upBtn').onclick=()=>S.parent&&navigateTo(S.parent,false,'parent-focus');$('#recursive').onchange=async()=>{if(!S.scopeRoot)return;const want=$('#recursive').checked,registered=(S.archiveRoots||[]).some(r=>canonPath(r)===canonPath(S.scopeRoot));if(want&&!registered){$('#recursive').checked=false;$('#status').textContent='Recursive archival begins with Scan.';return}if(want&&!S.catalogRecursive){const keep=[...S.scopeSelections];await load(S.scopeRoot,false,'recursive-toggle');S.scopeSelections=new Set(keep);S.scopeRecursive=true;renderFolderSelection();render();return}S.scopeRecursive=want;render();$('#status').textContent=`${want?'Recursive':'Direct'} view · ${visibleFiles().length.toLocaleString()} shown`};$('#search').oninput=render;$('#minConfidence').oninput=e=>{$('#minConfidenceValue').textContent=Math.round(e.target.value*100)+'%';render()};$('#thumbSize').oninput=e=>{document.documentElement.style.setProperty('--thumb',e.target.value+'px');S.virtualGrid.start=S.virtualGrid.end=-1;invalidateRingLayout();scheduleVirtualGrid()};$('#thumbSize').onchange=()=>render();$('#selectShownBtn').onclick=()=>{visibleFiles().forEach(f=>S.selected.add(f.path));refreshSelectionUI()};
 function evictPaths(paths){const gone=new Set(paths);S.files=S.files.filter(f=>!gone.has(f.path));for(const p of gone)S.selected.delete(p);S.multiWork=S.multiWork.filter(p=>!gone.has(p));if(S.selectionAnchor&&gone.has(S.selectionAnchor))S.selectionAnchor=null;if(S.viewer&&gone.has(S.viewer))closeViewer();render()}
 // A filesystem move is not a browse transaction. Apply the journal's exact path
 // mapping locally so the ringworld, filters, and navigation stay where they are.
@@ -959,10 +1037,20 @@ $('#qualitySelectedBtn').onclick=()=>manualQuality([...S.selected]);
 $('#qualityShownBtn').onclick=()=>manualQuality(visibleFiles().map(x=>x.path));
 $('#classifyBtn').onclick=()=>{const l=labels();if(!l.length)return alert('Give at least one label.');job('classify',[...S.selected],{labels:l})};$('#classifyShownBtn').onclick=()=>{const l=labels();if(!l.length)return alert('Give at least one label.');job('classify',visibleFiles().map(x=>x.path),{labels:l})};$('#detectShownBtn').onclick=()=>job('detect',visibleFiles().map(x=>x.path),{model:$('#detectorModel').value.trim()||'yolo11n.pt'});$('#segmentShownBtn').onclick=()=>job('segment',visibleFiles().map(x=>x.path));
 $('#neighborCount').oninput=e=>$('#neighborValue').textContent=e.target.value+' neighbors';
-$('#similarBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one image.');const path=[...S.selected][0];$('#status').textContent='Finding similar images…';try{const r=await post('/api/compare/similar',{path,paths:S.files.map(x=>x.path),limit:Math.min(5000,S.files.length)});S.compare={kind:'similar',results:r.results};render();$('#compareInfo').textContent=`${r.results.length} neighbors ranked from ${r.searched} embedded images`;$('#status').textContent='Similarity ready'}catch(e){alert(e.message);$('#status').textContent='Similarity failed'}};
-$('#uniqueBtn').onclick=async()=>{$('#status').textContent='Building uniqueness neighborhood…';try{const r=await post('/api/compare/unique',{paths:S.files.map(x=>x.path),neighbors:Number($('#neighborCount').value)});S.compare={kind:'unique',results:r.results};render();$('#compareInfo').textContent=`Uniqueness: ${r.searched} images, ${r.neighbors} nearest neighbors`;$('#status').textContent='Uniqueness ready'}catch(e){alert(e.message);$('#status').textContent='Uniqueness failed'}};
-$('#duplicatesBtn').onclick=async()=>{$('#status').textContent='Checking similarity near-hits for identical pixels…';try{const r=await post('/api/compare/duplicates',{paths:S.files.map(x=>x.path),neighbors:Number($('#neighborCount').value)});S.compare={kind:'duplicates',results:r.results};render();$('#compareInfo').textContent=`Duplicates: ${r.results.length} files in ${r.groups} exact visual groups; ${r.candidates} near-hit pairs checked`;$('#status').textContent='Duplicate filter ready'}catch(e){alert(e.message);$('#status').textContent='Duplicate check failed'}};
-$('#clearCompareBtn').onclick=()=>{S.compare=null;render();$('#compareInfo').textContent='Uses stored CLIP embeddings. The neighbor knob drives uniqueness and duplicate candidate search.'};
+function comparisonPaths(){return visibleFiles({ignoreCompare:true}).filter(f=>!f._n8Tombstone&&!f._n8ForwardTo).map(f=>f.path)}
+function commitComparison(kind,results){
+ S.compare=kind?{kind,results}:null;
+ S.sortKey=kind==='similar'?'similarity':kind==='unique'?'uniqueness':'none';S.sortDir='desc';
+ $('#sortKey').value=S.sortKey;$('#sortDir').textContent='↓';
+ // Comparison is an explicit new view: discard stale score prefabs, retain
+ // thumbnail assets, and present the highest-ranked result first.
+ const v=S.virtualGrid;v.prepGeneration++;v.rowReady=new Map();v.prepDesired=new Set();v.prepQueue=[];v.cursor=0;
+ render();
+}
+$('#similarBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one image.');const path=[...S.selected][0];$('#status').textContent='Finding similar images…';try{const r=await post('/api/compare/similar',{path,paths:comparisonPaths(),limit:Math.min(5000,S.files.length)});if(!r.results.length){$('#compareInfo').textContent='No embedded neighbors in this scope.';$('#status').textContent='No similarity results';return}commitComparison('similar',r.results);$('#compareInfo').textContent=`${r.results.length} neighbors ranked from ${r.searched} embedded images`;$('#status').textContent='Similarity ready'}catch(e){alert(e.message);$('#status').textContent='Similarity failed'}};
+$('#uniqueBtn').onclick=async()=>{$('#status').textContent='Building uniqueness neighborhood…';try{const r=await post('/api/compare/unique',{paths:comparisonPaths(),neighbors:Number($('#neighborCount').value)});if(!r.results.length){$('#compareInfo').textContent='Uniqueness needs at least two embedded images in this scope.';$('#status').textContent='Not enough embeddings';return}commitComparison('unique',r.results);$('#compareInfo').textContent=`Uniqueness: ${r.searched} images, ${r.neighbors} nearest neighbors`;$('#status').textContent='Uniqueness ready'}catch(e){alert(e.message);$('#status').textContent='Uniqueness failed'}};
+$('#duplicatesBtn').onclick=async()=>{$('#status').textContent='Checking similarity near-hits for identical pixels…';try{const r=await post('/api/compare/duplicates',{paths:comparisonPaths(),neighbors:Number($('#neighborCount').value)});commitComparison('duplicates',r.results);$('#compareInfo').textContent=`Duplicates: ${r.results.length} files in ${r.groups} exact visual groups; ${r.candidates} near-hit pairs checked`;$('#status').textContent='Duplicate filter ready'}catch(e){alert(e.message);$('#status').textContent='Duplicate check failed'}};
+$('#clearCompareBtn').onclick=()=>{commitComparison(null,[]);$('#compareInfo').textContent='Uses stored CLIP embeddings. The neighbor knob drives uniqueness and duplicate candidate search.'};
 $('#semanticBtn').onclick=async()=>{const q=$('#semantic').value.trim();if(!q)return;$('#status').textContent='Semantic search…';const r=await post('/api/search/semantic',{query:q,paths:S.files.map(x=>x.path),limit:Math.min(5000,S.files.length)});S.semantic=r.results;render();$('#status').textContent=`Semantic search: ${r.results.length} results from ${r.searched} embeddings`};$('#clearSemanticBtn').onclick=()=>{S.semantic=null;render()};
 $('#discardShownAnalysisBtn').onclick=async()=>{
  const shown=visibleFiles(),paths=shown.map(x=>x.path);
@@ -1009,7 +1097,7 @@ async function addToTrainingProject(paths,label){if(!S.trainingProject)return al
 $('#addShownProjectBtn').onclick=()=>addToTrainingProject(visibleFiles().map(x=>x.path),'visible');
 $('#addSelectedProjectBtn').onclick=()=>addToTrainingProject([...S.selected],'selected');
 $('#reviewTrainingBtn').onclick=async()=>{if(!S.trainingProject)return alert('Open or create a training project first.');$('#recursive').checked=false;await load(S.trainingProject.folder,true);$('#status').textContent=`Reviewing project: ${S.trainingProject.name} · ${(S.trainingProject.items||[]).length} images`;};
-$('#includeSelectedBtn').onclick=()=>trainingReview(true,null);$('#excludeSelectedBtn').onclick=()=>trainingReview(false,null);$('#reviewedSelectedBtn').onclick=()=>trainingReview(null,true);$('#findNeighborsBtn').onclick=async()=>{if(!S.trainingProject)return alert('Open or create a training project first.');const seed=[...S.selected][0];if(!seed)return alert('Select one embedded image as the seed.');try{const r=await post('/api/training/neighbors',{project:S.trainingProject.folder,path:seed,limit:96});const wanted=new Set(r.neighbors.map(x=>x.path));S.compare={kind:'similar',results:r.neighbors.map(x=>({path:x.path,score:x.similarity}))};S.similarityRef=seed;render();$('#status').textContent=`Found ${r.neighbors.length} embedding neighbors for ${seed.split(/[\\/]/).pop()}. Similarity sort is ready.`}catch(e){alert(e.message)}};
+$('#includeSelectedBtn').onclick=()=>trainingReview(true,null);$('#excludeSelectedBtn').onclick=()=>trainingReview(false,null);$('#reviewedSelectedBtn').onclick=()=>trainingReview(null,true);$('#findNeighborsBtn').onclick=async()=>{if(!S.trainingProject)return alert('Open or create a training project first.');const seed=[...S.selected][0];if(!seed)return alert('Select one embedded image as the seed.');try{const r=await post('/api/training/neighbors',{project:S.trainingProject.folder,path:seed,limit:96});const wanted=new Set(r.neighbors.map(x=>x.path));S.similarityRef=seed;commitComparison('similar',r.neighbors.map(x=>({path:x.path,score:x.similarity})));$('#status').textContent=`Found ${r.neighbors.length} embedding neighbors for ${seed.split(/[\\/]/).pop()}. Similarity sort is ready.`}catch(e){alert(e.message)}};
 async function applyTrainingTerm(selectedOnly){if(!S.trainingProject)return alert('Open or create a training project first.');const term=$('#trainingTerm').value.trim();if(!term)return;let paths=null;if(selectedOnly){paths=[...S.selected];if(!paths.length)return alert('Select one or more source images in the grid first.')}try{const r=await post('/api/training/policy',{project:S.trainingProject.folder,term,state:Number($('#trainingTermState').value),paths});S.trainingProject=r.project;renderTrainingProject();$('#trainingTerm').value=''}catch(e){}}
 $('#termBatchBtn').onclick=()=>applyTrainingTerm(false);$('#termSelectedBtn').onclick=()=>applyTrainingTerm(true);
 $('#assembleTrainingBtn').onclick=async()=>{if(!S.trainingProject)return alert('Open or create a training project first.');try{const r=await post('/api/training/assemble',{project:S.trainingProject.folder,trainer:$('#trainerTarget').value,model_profile:$('#modelProfile').value});S.trainingProject=r.project;renderTrainingProject();$('#status').textContent=`Assembled ${r.files} images → ${r.output}`}catch(e){}}
@@ -1175,6 +1263,13 @@ async function automaticGridRefresh(){const d=gridRefreshNotice();await new Prom
 const watchedComfyBatches=new Set();
 async function watchComfyBatch(id){if(!id||watchedComfyBatches.has(id))return;watchedComfyBatches.add(id);try{for(;;){await new Promise(r=>setTimeout(r,1000));let b;try{b=await j(`/api/comfy/recovery-batch/${enc(id)}`)}catch(e){if(String(e.message).includes('404'))return;continue}if(!b.complete)continue;if(batchIntersectsCurrentView(b))await automaticGridRefresh();return}}finally{watchedComfyBatches.delete(id)}}
 
+async function returnToOrigin(){
+ const v=S.virtualGrid;if(!v.rows.length)return;
+ gridActivity('return-to-origin');v.cursor=0;v.scoutDir=0;v.scoutExtra=0;
+ prepareNeighborhood();await prepareRow(0);paintRing();
+ $('#status').textContent='Returned to origin';
+}
+const originButton=$('#returnToOriginBtn');if(originButton)originButton.onclick=returnToOrigin;
 async function redrawGrid(){
  const a=$('#redrawGridBtn'),b=$('#orderingRedrawGridBtn'),tempHome=tempHomePath(),shown=visibleFiles();
  if(a)a.disabled=true;if(b)b.disabled=true;$('#status').textContent=`Redrawing current grid… ${shown.length.toLocaleString()} shown.`;

@@ -1,3 +1,16 @@
+I.2t-l cumulative release preparation, 2026-10-12
+User reports inspector/box behavior improved and authorizes packing a repo update.
+Source assembled from the clean published g inventory plus verified h-l patches.
+No live installation state copied; source publishing copy was never launched.
+Checks: JavaScript syntax; stable fit and thumbnail cancellation functions;
+canonical bbox receipt and SQLite persistence, replacement and invalid-box tests;
+isolated HTTP/static/browse/move smoke; prior actual scoped vector/FAISS tests.
+Runtime replacements match incremental artifacts before release URL cache bust.
+Archive CRC, complete manifest hashes, full-vs-update payload identity verified.
+No fresh installation, GPU/Comfy/SAM inference or full browser performance
+benchmark claimed. User confirmed inspector improvement and box auto-selection;
+full-library comparison and other integrations still need broader testing.
+
 This is the audit record from the I.2t-f incremental patch. For installation of this complete source package, follow README.md; the historical incremental installation instructions below do not apply to the full ZIP.
 
 N8Vision I.2t-f — Final error/compatibility audit

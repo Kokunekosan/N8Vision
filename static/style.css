@@ -282,3 +282,14 @@ body.touchGridEnabled #grid{touch-action:none}
 .viewerImageFrame>.teachOverlay{position:absolute;inset:0;width:100%;height:100%}
 .viewerPanel.viewerStretch .viewerImageFrame>.viewerSource{max-width:none;max-height:none}
 .teachObs button{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Plain browsing: visibility only, including retained/future row prefabs. */
+body[data-hide-badges="true"] #grid .badges,
+body[data-hide-badges="true"] #grid .qualityScore,
+body[data-hide-badges="true"] #grid .semanticScore,
+body[data-hide-badges="true"] #grid .gridGeomLayer,
+body[data-hide-badges="true"] #grid .geomOverlay{display:none!important}
+
+/* I.2t-k: display fit is explicit; pixel dimensions stay unchanged. */
+.maskCanvasStack{flex:none;display:block}
+.maskCanvasStack canvas,#maskCanvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none}

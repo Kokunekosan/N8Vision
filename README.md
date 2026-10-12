@@ -5,7 +5,7 @@
 A free, open-source visual image library with automatic image inspections,
 an infinite-scroll browser, file management, and ComfyUI integration.
 
-Current source snapshot: **I.2t-g**. This is an early release; bug reports welcome.
+Current source snapshot: **I.2t-l**. This is an early release; bug reports welcome.
 
 ## Download and run
 
@@ -40,6 +40,18 @@ what happened, and relevant logs or screenshots. Remove credentials from logs.
 - Same-root moves that preserve scroll positions and cross-root hand-truck markers.
 - Sequential file moves with metadata preservation and completed-move journaling.
 - ComfyUI bridge and image/refinement tools.
+
+## Latest update
+
+- Settings toggle hides all image-grid badges and annotation overlays.
+- Faster inspector: pauses thumbnail preparation, prioritizes source loading,
+  reuses loaded images, and avoids full viewer rebuilds when saving boxes.
+- Stable proportional mask-canvas fit and incremental mask painting.
+- New boxes automatically selected for Paint Mask or SAM Mask.
+- Similarity/uniqueness score sorting and scoped vector queries repaired.
+- Return to Origin homes the current grid without a new archive scan.
+- Existing icons, incremental discovery, automatic Sanity/BRISQUE and move
+  behavior retained. No databases, caches, model weights or local settings.
 
 ## Release policy
 

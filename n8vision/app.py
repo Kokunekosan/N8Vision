@@ -1578,7 +1578,8 @@ def grid_overlay(path:str=Query(...),kind:str=Query(...)):
  try:
   st=p.stat()
   with Image.open(p) as src:
-   oriented=ImageOps.exif_transpose(src);sw,sh=oriented.size
+   sw,sh=src.size
+   if src.getexif().get(274,1) in (5,6,7,8):sw,sh=sh,sw
   scale=min(1.0,300.0/max(sw,sh));tw=max(1,round(sw*scale));th=max(1,round(sh*scale))
   receipt=json.dumps([(r['concept'],r['confidence'],r['provider'],r['model'],r['kind'],g) for r,g in rows],sort_keys=True,separators=(',',':'),default=str)
   key=hashlib.sha256(f'overlay-v1|{kind}|{p}|{st.st_size}|{st.st_mtime_ns}|{tw}x{th}|{receipt}'.encode('utf-8','surrogatepass')).hexdigest()
@@ -2918,6 +2919,16 @@ def save_filter_preset(req:FilterPresetRequest):
 def delete_filter_preset(name:str):
  cfg=_load_config();presets=cfg.setdefault('filter_presets',{});presets.pop(name,None);_save_config(cfg);return {'presets':presets}
 
+def _comparison_rows(model,paths):
+ # None retains the unscoped API behavior; an explicit empty scope is empty.
+ with db() as c:
+  if paths is None:return c.execute("SELECT path,dim,vector FROM embeddings WHERE provider='clip' AND model=?",(model,)).fetchall()
+  result=[];scope=list(dict.fromkeys(paths))
+  for start in range(0,len(scope),800):
+   chunk=scope[start:start+800];marks=','.join('?'*len(chunk))
+   result.extend(c.execute(f"SELECT path,dim,vector FROM embeddings WHERE provider='clip' AND model=? AND path IN ({marks})",[model,*chunk]).fetchall())
+  return result
+
 @app.post('/api/compare/similar')
 def compare_similar(req:SimilarRequest):
  try:
@@ -2926,7 +2937,7 @@ def compare_similar(req:SimilarRequest):
   with db() as c:
    row=c.execute("SELECT dim,vector FROM embeddings WHERE path=? AND provider='clip' AND model=?",(target,req.model)).fetchone()
    if not row:raise HTTPException(409,'Selected image has no CLIP embedding yet')
-   rows=c.execute("SELECT path,dim,vector FROM embeddings WHERE provider='clip' AND model=?",(req.model,)).fetchall()
+  rows=_comparison_rows(req.model,req.paths)
   q=np.frombuffer(row['vector'],dtype='float32');vals=[]
   for r in rows:
    if r['path']==target or (allowed is not None and r['path'] not in allowed):continue
@@ -2945,7 +2956,7 @@ def compare_unique(req:UniqueRequest):
   try:import faiss
   except Exception:raise HTTPException(409,'FAISS is not installed; install the classifier/vector provider first')
   allowed=set(req.paths) if req.paths else None
-  with db() as c:rows=c.execute("SELECT path,dim,vector FROM embeddings WHERE provider='clip' AND model=?",(req.model,)).fetchall()
+  rows=_comparison_rows(req.model,req.paths)
   rows=[r for r in rows if allowed is None or r['path'] in allowed]
   if len(rows)<2:return {'results':[],'searched':len(rows),'neighbors':0}
   paths=[r['path'] for r in rows];x=np.vstack([np.frombuffer(r['vector'],dtype='float32') for r in rows]).astype('float32')
@@ -2976,7 +2987,7 @@ def compare_duplicates(req:DuplicateRequest):
   try:import faiss
   except Exception:raise HTTPException(409,'FAISS is not installed; install the classifier/vector provider first')
   allowed=set(req.paths) if req.paths else None
-  with db() as c:rows=c.execute("SELECT path,dim,vector FROM embeddings WHERE provider='clip' AND model=?",(req.model,)).fetchall()
+  rows=_comparison_rows(req.model,req.paths)
   rows=[r for r in rows if (allowed is None or r['path'] in allowed) and Path(r['path']).is_file()]
   if len(rows)<2:return {'results':[],'groups':0,'searched':len(rows),'candidates':0,'neighbors':0}
   paths=[r['path'] for r in rows];x=np.vstack([np.frombuffer(r['vector'],dtype='float32') for r in rows]).astype('float32')

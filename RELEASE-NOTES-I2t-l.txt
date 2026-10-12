@@ -1,0 +1,17 @@
+N8Vision I.2t-l
+
+Download the GitHub-Ready ZIP for a complete source package; patch stacking is
+not needed. Fresh install: extract to an empty folder, run install.cmd, then
+N8Vision.cmd. Existing install: stop N8Vision, replace source files while
+preserving your data/cache/models/settings, restart, and refresh the browser.
+
+This update combines h through l: no-badges setting, faster inspector and mask
+painting, automatic box selection, repaired vector ranking/scoped comparisons,
+and Return to Origin. SAM model loading/inference time is unchanged.
+
+The Repo-Update ZIP contains only changed source/documentation relative to
+public I.2t-g, including refreshed source manifest. Extract over a clean g
+repository checkout, review and commit those files. It is not a runtime backup.
+
+Verified source/ZIP hashes and scoped automated tests; inspector improvements
+confirmed in the maintainer's live installation. No machine state included.
