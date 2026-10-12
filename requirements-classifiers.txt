@@ -1,0 +1,5 @@
+# Torch is deliberately installed and verified by install.cmd at exactly 2.14.0.
+# Do not add an unbounded torch requirement here: pip may replace the known-good build.
+transformers>=5.0
+huggingface_hub
+safetensors

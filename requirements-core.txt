@@ -1,0 +1,5 @@
+fastapi>=0.116
+uvicorn[standard]>=0.35
+pillow>=11.3
+send2trash>=1.8
+qrcode>=8.2

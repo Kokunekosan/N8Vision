@@ -1,0 +1,7 @@
+I.1 mask inspection/provenance patch (based on I.0)
+- Save masks created from an existing detection under the original detector model/provider/confidence.
+- Display source model in Mask Studio and detection list.
+- Show persisted mask overlay in full-size image viewer and restore detector-based box colors.
+- Mask save records reviewed/approved status and SAM/manual method.
+LIMITATION: No global SAM Boxes batch implementation was located in this I.0 package. Its output attribution/persistence cannot be certified by this patch. Grid overlay already renders persisted mask observations; if the global operation writes elsewhere, integration remains to be fixed.
+UNTESTED: live app, image layout, global batch, training.

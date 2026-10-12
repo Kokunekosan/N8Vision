@@ -1,0 +1,10 @@
+Consolidated through I.2t-f
+- Directory mtime cache, Windows notifications and incremental image intake.
+- Automatic Sanity/BRISQUE and startup backfill for unscanned archive files.
+- Selectable absolute inspector filepath; quiet New Noticer logging.
+- Deleted/moved placeholders retained until the next normal grid rebuild.
+- Same-root moves retain infinite-scroll slots and relink metadata.
+- Cross-root moves leave laden hand-truck clip-art forwarding placeholders.
+- Move-return restores cached placeholders to live images without duplication.
+- Sequential moves preserve content digests without rehashing.
+- Partial bulk failures apply already-completed path mappings.

@@ -1,0 +1,1 @@
+I.2 SAM Boxes: global SAM output now uses Mask Studio canonical cropped mask_rle/mask_size/bbox format. Source YOLO provider, model, class, confidence and instance metadata are preserved; SAM model and IoU recorded separately. Generated masks are draft/unreviewed. This fixes NEW global SAM outputs; pre-existing legacy SAM observations are not migrated. Live integration untested.

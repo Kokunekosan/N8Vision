@@ -1,0 +1,42 @@
+name: Bug report
+description: Tell us what broke in N8Vision.
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: N8Vision version
+      placeholder: I.2t-f
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your computer
+      description: Windows version, Python version, GPU (if any), and browser.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you do?
+      description: Steps that someone else can follow to reproduce the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Attach screenshots or paste relevant console output. Remove credentials.

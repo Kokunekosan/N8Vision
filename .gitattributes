@@ -1,0 +1,3 @@
+# Preserve the exact bytes of approved release snapshots.
+# Text diffs remain available; Git must not rewrite line endings on checkout.
+* -text

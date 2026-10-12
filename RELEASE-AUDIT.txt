@@ -1,0 +1,66 @@
+This is the audit record from the I.2t-f incremental patch. For installation of this complete source package, follow README.md; the historical incremental installation instructions below do not apply to the full ZIP.
+
+N8Vision I.2t-f — Final error/compatibility audit
+
+Result: one concrete move-cache defect found and fixed. No other failures in
+the completed checks. This is a scoped validation report, not a guarantee that
+every application feature or target environment has been tested.
+
+Fix: move R1 -> R2 -> original R1 filepath previously found the old forwarding
+placeholder in R1's cached catalog and skipped inserting the returning image.
+Destination intake now restores the placeholder's existing object to a live
+image, retaining its slot and avoiding duplicate records. The same handling
+restores an existing deletion tombstone when that path becomes a move target.
+
+Install over I.2t-e: stop N8Vision, extract this ZIP over the installation,
+restart and refresh the browser. Only static/app.js and static/index.html are
+replaced. Browser cache marker advances to i2t-f. Earlier patches must already
+be installed; this is an incremental patch, not a full application build.
+
+Verified:
+- Installed private Python environment: pip check reports no broken requirements.
+- All application, launch/reconciliation and extension Python sources compile
+  under both Python 3.12 and 3.14. Real functional tests use the installation's
+  existing Python environment; no dependencies were installed or upgraded.
+- Four deterministic scanner/server integration tests pass, including unchanged
+  directory checks, nested additions, zero-byte retry, pagination, direct mode,
+  transient failure, epoch restart handling and unchanged-mtime notifications.
+- Real startup pipeline passes without manually releasing its event: initial
+  validation, completed-browse acknowledgement fallback, archive janitor,
+  automatic Sanity for old unscanned and newly discovered PNGs, and background
+  BRISQUE. Already-scanned Sanity is skipped; missing counts reach zero.
+- Real sequential two-file move relocates observations, embeddings and tracking,
+  preserves digests without rehashing, and journals each completed file.
+- Main browser script parses; Comfy browser extension parses as an ES module.
+- Controlled browser-function tests cover same-root position/selection/metadata
+  retention, cross-root placeholders, cached destination intake, nested roots,
+  prefix boundaries, mounted-pixel preservation, partial batch errors and the
+  corrected root round trip without duplicate destination records.
+- Prior deletion/erosion checks verify retained row identity, no compaction at
+  eviction, one-row scroll progress and cleanup on normal layout rebuild only.
+- ASGI HTTP smoke checks pass: main page and browser asset, directories, chunk
+  browse, launch/inspector status, move response, file retrieval, missing folder
+  404. Unpaired non-local API request rejected with 401 as expected.
+- Static HTML contains no duplicate IDs.
+- Archive CRC and exact runtime payload hashes verified.
+
+Testing note: installed Starlette emits a TestClient/httpx deprecation warning.
+The HTTP smoke tests still pass. TestClient is used by this audit, not by normal
+application startup; no runtime dependency change was made for that warning.
+
+Not verified in this audit:
+- Fresh installation from the network, or dependency resolution on another PC.
+- Live graphical-browser interaction, mobile/touch UI or older browser versions.
+- GPU training/inference, full SAM/YOLO/CLIP model paths and model downloads.
+- Live Comfy workflows, output recovery/bridge integration, public/named tunnels
+  and remote admin credential recovery.
+- Non-Windows runtime behavior. Python syntax compatibility is not equivalent
+  to validating all runtime/platform dependencies.
+The corrected code was not installed into or restarted on the live server.
+
+Before committing source to Git:
+Use application source only. Exclude .venv/, cache/, data/, __pycache__/, *.pyc,
+downloaded model weights and local credentials/token files. Keep your existing
+runtime database/configuration outside the tracked release payload. The work/
+tree in this project also contains isolated test runtime data and source
+snapshots; do not import it wholesale into a new repository.

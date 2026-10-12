@@ -1,0 +1,13 @@
+transformers
+accelerate
+safetensors
+numpy
+faiss-cpu
+ultralytics
+opencv-contrib-python
+open-clip-torch
+pandas
+scikit-learn
+tqdm
+# Yuan's reference feature extractor; no maintained PyPI package exists.
+git+https://github.com/mattkyuan/image-quality-fusion.git
