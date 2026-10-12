@@ -1,9 +1,11 @@
 # N8Vision
 
+<img src="static/N8_256.png" width="128" height="128" alt="N8Vision icon">
+
 A free, open-source visual image library with automatic image inspections,
 an infinite-scroll browser, file management, and ComfyUI integration.
 
-Current source snapshot: **I.2t-f**. This is an early release; bug reports welcome.
+Current source snapshot: **I.2t-g**. This is an early release; bug reports welcome.
 
 ## Download and run
 

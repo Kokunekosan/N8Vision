@@ -1,3 +1,7 @@
+I.2t-g icon release
+- Supplied 16x16 browser favicon and 256x256 app/header/README icon.
+- PNG files are byte-for-byte originals; application behavior unchanged.
+
 Consolidated through I.2t-f
 - Directory mtime cache, Windows notifications and incremental image intake.
 - Automatic Sanity/BRISQUE and startup backfill for unscanned archive files.
