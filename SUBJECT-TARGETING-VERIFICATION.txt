@@ -1,0 +1,45 @@
+S2 subject targeting — largest mask first
+
+Apply over S1a. Stop Vision, extract, restart and refresh. No new dependencies.
+Select the test spread and rerun Separate selected subjects in Full.
+
+Existing positive whole-subject box/mask detections now seed the targets before
+the new YOLO proposals are consolidated. BiRefNet no longer has to produce
+disconnected foreground components to preserve two separately boxed people.
+Whole-target identity is protected from crop relabeling into clothing/parts.
+Fashion/clothing/brassiere/face/body-part/style labels are excluded as subject
+targets, while their original annotations are retained.
+
+With valid masks, order nested candidate layers by ACTUAL occupied pixel count,
+largest first. Mask rectangle size and confidence do not replace pixel area.
+Valid saved mask pixels are used directly. Unmasked whole-subject boxes provide
+fallback targets. Suppression works within the same identity family; separate
+people stay separate and a burger can remain an additional object within a
+person's box. Generic merged Human/Person/Object parents cannot swallow separately
+localized individuals. Unmasked boxes retain detector confidence precedence.
+
+Subject vocabulary always includes the baseline whole-subject set plus suitable
+configured/requested nouns. It no longer gets replaced wholesale by an unrelated
+saved fashion vocabulary. Defaults include people/bride/groom, common animals,
+fictional creatures, vehicles, food including hamburger, plants and objects.
+First pass remains 20%/100 detections; uncertain new targets use 5%/one detection
+on the crop. Archived target identity is not overwritten by that second pass.
+
+On rerun, old AUTOMATIC draft fashion/clothing/part subject masks are retired
+after successful inference. Manual annotations and approved masks are preserved.
+Other archived subject masks are inherited, not rebuilt. Existing metadata,
+observations and browser-ready startup behavior remain intact.
+
+Verified with synthetic regression fixtures: connected foreground with two
+archived women + burger while 34% brassiere/95% face/70% merged Human are rejected;
+64% and 42% Woman identities retained; lower-confidence larger occupied mask
+wins nested layers; sparse large rectangle loses to denser smaller mask;
+multi-instance inheritance, existing mask preservation and stable reruns;
+only unapproved automatic non-subject drafts removed. Python compilation and
+source-only ZIP CRC/hash/application reconstruction passed.
+
+Limits: your actual source image/test spread and GPU were not rerun here.
+BiRefNet remains foreground segmentation; overlapping person/object masks can
+share pixels and need review. Correct boxes/masks must already exist or be found
+by YOLO-World; expanded vocabulary does not guarantee finding the burger.
+No automatic full-library rerun, live installation writes or GitHub changes.

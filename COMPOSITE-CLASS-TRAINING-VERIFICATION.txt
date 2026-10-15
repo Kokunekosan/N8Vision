@@ -1,0 +1,69 @@
+T2: real composite-class training backend
+Apply over H1a: stop N8Vision, extract patch, restart Full, refresh browser.
+This machine already has the required encoder/cache. Other Full installs run
+Install-SubjectParts.cmd (PartGLEE option suffices) to obtain shared resources.
+No additional environment or model download on a prepared H1 installation.
+
+FLOW: Assemble subject > inspect with preferred language model > Use language-
+model class (or manually correct the Subject label) > Learn Subject.
+Use learned class is also an explicit confirmation. Same-name LM confirmation
+counts as a manual review, but a draft reply alone never enables training.
+Learn Subject freezes the exact current subject mask pixels on gray (max1024),
+not the surrounding image, along with the manually confirmed label and source
+hash. No automatic inference, automatic label, or detector badge trains itself.
+Classes register immediately; one shared classifier learns all confirmed classes.
+Existing LM queries receive up to64 confirmed names as data, without forcing one.
+Architecture added to supported broad LM categories; classes themselves are open.
+
+TRAINING: frozen pretrained CLIP ViT-B/32 visual features plus a supervised linear
+class head, CPU / at most4 threads, actual AdamW / cross-entropy weight updates.
+This trains N8Vision's visual class recognizer. It does NOT fine-tune the user's
+preferred LM, GLEE/HOPS part ownership, anatomy extraction, or YOLO. Source masks
+and human labels remain intact. This first trainer does not solve new ownership.
+Features cache by exact crop + encoder hashes. Worker uses same installed .venv,
+with optional research compatibility libraries isolated in the existing cache.
+
+Minimum gate: at least TWO confirmed classes, each represented by THREE different
+original source-image hashes: at least2 training sources and1 validation source.
+This is pipeline readiness, not evidence of generalization from three examples.
+Multiple subjects/crops from the same image cannot cross train/validation sets.
+Classes below this gate wait; old lessons replay, old trained rows warm-start.
+Latest manual revision per physical subject supersedes older labels. Identical
+pixels with conflicting simultaneous labels are excluded for review. Legacy
+lessons backfill only if original source SHA matches; missing/changed sources
+are reported. Newly frozen crops remain usable after deleting original images.
+
+Candidate validation: >=80% accepted held-out predictions overall, >=50% per
+class; no reduction for ANY existing class versus active model on those examples.
+With one held-out image per class, the per-class gate requires that image pass.
+Recognition acceptance: class score>=.65, margin>=.15, support similarity above
+training-derived floor. These scores are not calibrated certainty guarantees.
+Results remain drafts, can abstain, and never rename observations automatically.
+Candidate checkpoint / report retained; active pointer only changes after gate
+and exact dataset recheck. New lessons during training reject stale activation.
+Training cancellation stops own subprocess. Restore previous class model rolls
+back an activation. Immutable teaching examples/crops and trained model files
+are local archive state, never bundled in release archives.
+
+Full panel: Train learned subject classes; Recognize learned classes in selected
+subjects; Restore previous class model; Refresh class training status.
+Train after manual Learn Subject commits defaults ON, coalescing manual commits
+and leaving insufficient classes pending. It never triggers from inference.
+Lite may capture manual lessons without importing Torch/NumPy; actual training,
+confirmation of LM proposals, and learned recognition require Full.
+
+VERIFIED: real pretrained encoder loaded with no unmatched trained tensors.
+Two artificial visual classes, six confirmed composites, four training sources
+and two held-out sources. Actual training loss .69517076 -> .00134065; held-out
+accepted accuracy2/2. Six draft recognitions accepted. Replay retained both
+classes' held-out results, warm-start weights, then rollback restored prior model.
+These controlled fixtures verify machinery, NOT real character accuracy or broad
+classification quality. No original 48k archive training, live source edits,
+live user-model installation, or GitHub publication performed.
+Also verified: draft LM cannot teach; exact composite capture; source deletion
+survival; changed crop rejected; latest relabel; shared-source split isolation;
+insufficient-data rejection; rejected candidate preserves active model; stale
+lessons prevent activation; Full gate; Lite manual-learning regressions; tag
+cleanup/ownership/LM-input regressions; frontend syntax and real control dispatch.
+Physical desktop/phone UI and accuracy on user's character spread remain checks.
+ZIP CRC/hash and exact H1a incremental reconstruction verified.

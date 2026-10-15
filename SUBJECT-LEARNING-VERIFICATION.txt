@@ -1,0 +1,42 @@
+T1 — manual subject teaching capture
+
+Apply over Q1. Stop Vision, extract patch, restart and refresh the browser.
+No dependency install or new model download required.
+
+The inspector has Learn Subject. It is disabled for untouched automatic subjects,
+ordinary detections, same-label corrections and already committed lessons.
+Manually changing a Subject noun marks the resulting subject ready to teach.
+Select that subject after relabeling, then press Learn Subject to commit it.
+The eligibility survives closing the inspector and restarting Vision.
+
+To teach ownership, select an ordinary part MASK and press Add part to subject.
+Choose the owning masked Subject from the numbered list (boxes distinguish equal
+names). The subject retains the original part geometry as a manually confirmed
+attachment and becomes ready to teach. A part already attached cannot be added
+again or attached to another subject through this action. Another whole Subject
+cannot be attached as a part. Paint a mask first if the part is only a detector box.
+This is manual ownership capture, not automatic anatomical reconstruction.
+
+Learn Subject saves an immutable lesson snapshot into the archive database:
+subject label, original label/change reason, existing mask, manually attributed
+part masks, source path, SHA256 content identity and source stat signature.
+Commit is exactly once per manual revision; stale selections are rejected.
+The button disables after commitment. Masks and ordinary detections are preserved.
+No automatic YOLO/LM result creates a training lesson. A name change alone does
+not assert that every anatomical relationship was manually verified.
+
+State awaiting_trainer is explicit. WEIGHTS ARE NOT UPDATED BY THIS PATCH.
+PartGLEE and LangHOPS are candidate pretrained object-part backends, not yet
+installed or integrated. Next stage: evaluate both against the real generation
+spread, establish parented reconstruction, then connect confirmed lessons to a
+continual trainer with replay, held-out evaluation, per-label update scheduling
+and checkpoint rollback. No model self-training from automatic predictions.
+Existing Q1 LM query still uses its original montage; assembled-subject-only
+input and provider-independent settings/fallback remain pending integration.
+
+Verified: actual ASGI manual relabel, same-label no-op eligibility, untouched
+subject refusal, part attachment/duplicate protection, exactly-once lesson
+commit, snapshot/source hash and preserved part masks; no heavy imports in Lite.
+Frontend syntax/button state checks and existing edition API checks passed.
+ZIP CRC/hash and Q1 incremental reconstruction verified. Physical inspector UI
+and pretrained reconstruction accuracy remain untested. No live/GitHub writes.

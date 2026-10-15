@@ -1,0 +1,24 @@
+Subject labels + browser readiness, S1a
+Apply over S1. Stop Vision, extract the patch, restart and refresh. No dependency
+installation needed if S1 Full is already installed. No live/GitHub changes.
+
+Subject detections display Subject — woman (or Subject — Female for inherited
+Female labels); plain woman remains woman. New subject masks and enriched boxes
+have persistent subject_role metadata. Existing S1 masks are recognized from
+their subject pipeline/provider without rescanning. Rerun separation to mark an
+older inherited mask which S1 left without subject provenance: it adds only
+metadata, preserving label, confidence, detector identity and all mask pixels.
+Subject marking survives painting/replacement and relabeling. Subject/plain
+badges are separated for display; underlying concepts and existing count filters
+remain unchanged. Inspector lists/selection, box overlay labels, subject-provider
+filter labels and mask-preparation captions use the same visible prefix.
+
+Includes requested browser startup fix: wait for Uvicorn.started AND successful
+local N8Vision HTML before opening, rather than a .8-second timer. Cancel on exit.
+
+Verified: full JS parsing and label tests (plain vs subject, S1 compatibility,
+separate display groups with unchanged filter counts); actual archive persistence
+for enriched/new/inherited masks, metadata-only marking and stable repeat runs;
+browser readiness/404/unrelated-page/open-once/cancellation; Python compilation;
+source-only ZIP CRC/hash and patch reproduces full snapshot. No GPU/model rerun
+needed for metadata/UI changes. User UI confirmation pending.

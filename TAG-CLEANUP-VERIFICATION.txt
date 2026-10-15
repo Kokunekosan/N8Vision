@@ -1,0 +1,48 @@
+H1a: merged feature badges/filters and explicit removed-detector cleanup
+Apply over H1: stop N8Vision, extract patch, restart, refresh browser.
+No dependencies, model downloads, archive migration or automatic deletions.
+
+Names normalize case/whitespace and conservative exact plural aliases:
+hands/hand, feet/foot, arms/arm, legs/leg, eyes/eye, ears/ear,
+fingers/finger, toes/toe, heads/head, faces/face, women/woman,
+men/man, people/person. No generic trailing-s stripping or synonym guessing.
+Badges and discovered feature filters merge across classifiers. Badge tooltip
+retains every original name/provider/model. Inspector retains all raw detections.
+Subject badges remain separate from ordinary observations of the same noun.
+Nonlocalized classifiers count as one presence; localized count filters count
+retained physical instances, rather than repeated records from different models.
+Saved filter presets migrate equivalent names to the merged filter on load.
+
+Strongest numeric confidence wins display for equivalent names / same role,
+when box intersection-over-union >= .85. Two RLE masks additionally require
+actual pixel IoU >= .85; polygon comparisons use a bounded 256px projection.
+No suppression from containment alone: large body and small hand remain distinct.
+No database deletion, relabeling, training mutation or lost detector attribution.
+Grid boxes/masks and badges use the same presentation; inspector initially hides
+redundant boxes, but selecting an original record draws its own editable frame.
+
+Settings > Library > Clean observations from uninstalled detectors previews
+missing local YOLO models (including managed EraX), then asks to delete only the
+listed observations. Disabled-but-installed detectors remain. Auto-download
+OIV7/World builtins, unknown providers, offline/unavailable model directories,
+reviewed/manual corrections, owned part references and subjects with parts or
+learning state are preserved by default. Enable Include reviewed and owned
+detector observations for an intentional complete wipe, with explicit preview.
+Removed live ownership references are detached; surviving composites rebuild
+from original pixels and remaining parts. Committed lessons remain intact.
+No confidence about missing files means no purge.
+This intentionally targets verifiable local-model removal; it does not infer that
+an optional package, remote service, or switched-off feature was uninstalled.
+Preview token is recalculated under the archive lock; reinstall/changed findings
+reject stale cleanup. No images, embeddings, lessons or corrections are deleted.
+No cleanup during startup or ordinary detector removal.
+
+Verified with temporary archive and ASGI: strongest duplicate vs separate hands,
+disjoint mask pixels despite equal boxes, polygon duplicates, preserved raw rows,
+browse/overlay consistency, explicit Lite cleanup, reinstall invalidates preview,
+installed/reviewed/offline/builtin preservation; explicit include-reviewed wipe
+and owner-mask rebuild. Frontend VM checks: single alias
+filter, instance counts, max confidence, attribution, alias search and syntax.
+Manual teaching and reconstruction regressions plus Full capability tests passed.
+ZIP CRC/hash and exact H1 incremental reconstruction verified. Physical desktop
+and phone UI remain to check. No live source/archive or GitHub changes.

@@ -1,0 +1,39 @@
+H1: optional PartGLEE / LangHOPS subject and part reconstruction
+Apply over I.2t-l-T1a: stop Vision, extract patch, restart Full, refresh browser.
+Choose GLEE or HOPS and Assemble selected subjects. Maximum 25 selected images.
+Other machines: run Install-SubjectParts.cmd for the desired optional backend.
+One existing .venv; research compatibility libraries live in an isolated cache.
+CUDA required. HOPS is substantially heavier; original checkpoint about 16 GB.
+LangHOPS is CC BY-NC-SA 4.0: https://github.com/y9miao/LangHOPS-release
+PartGLEE upstream: https://github.com/ProvenceStar/PartGLEE
+Model sources and weights are downloaded separately, preserving upstream terms.
+HOPS additionally needs account access to google/paligemma2-3b-pt-448.
+
+Real GPU inference verified with both complete pretrained checkpoints; zero
+missing/unmatched trained tensors. Tested on the supplied phone screenshot,
+which includes video overlays, not the inaccessible original generation spread.
+GLEE: 5 subjects, 5 part proposals, 1 assigned draft and 4 unresolved.
+HOPS: 4 subjects, 3 proposals, all 3 unresolved. These are not accuracy claims.
+Part proposals at .20 remain drafts; noun acceptance remains .65. Max 1024 input.
+No automated result enables Learn Subject or becomes a training lesson.
+Manual label changes / part attachment enable explicit Learn Subject capture.
+Actual continuous weight training is still pending; lessons report awaiting_trainer.
+
+Original manual nouns and original mask pixels retained; automatic parts extend
+composite pixels. Stable subject IDs bind owners. Explicit attachment can correct
+an automatic wrong owner while rebuilding that owner's original composite.
+Manually confirmed owners remain protected against accidental reassignment.
+Stale source/annotations reject worker results. Cancellation stops own worker.
+For HOPS only, idle local Comfy cached models may be released; active queues
+and remote servers are left alone. This does not queue or interrupt Comfy jobs.
+Automatic preferred-LM fallback defaults off. Explicit LM inspection skips YOLO
+naming and sends only a ready composite crop on gray, without scene context.
+Unassembled legacy subjects must be assembled first.
+
+Verified API regressions: mask union/base preservation, manual noun preservation,
+manual-only learning, exact-once lessons, reassignment, stale result rejection,
+subject-only LM input, Lite/Full gates. Frontend syntax and controls checked.
+Physical desktop/phone UI and broader ownership accuracy remain user checks.
+ZIP CRC/hash and exact T1a incremental reconstruction verified.
+No credentials, models, machine config, archive database or environment bundled.
+No GitHub publication or live source replacement performed.

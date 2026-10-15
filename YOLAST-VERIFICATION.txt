@@ -1,0 +1,49 @@
+S3 YOLAST — You Only Look A Second Time
+
+Cumulative patch over S1a OR S2. S2 is INCLUDED, so skip the S2 ZIP if it was
+not installed. Stop Vision, extract, restart Full and refresh. No dependency
+changes; SAM may download its existing sam_b.pt weights on first ambiguous split.
+Select the test spread and rerun Separate selected subjects.
+
+First pass: whole-image BiRefNet foreground, whole-subject archive seeds, broad
+YOLO vocabulary at 20%, up to 100 detections. S2 largest actual mask pixel ranking
+and clothing/part exclusion retained. Existing validated masks are preserved.
+
+YOLAST component naming: examine connected foreground CROPS independently for
+humanoids, animals, vehicles AND food, at 15%, up to 100 detections per group.
+Do this even if the first label was confident. Allow multiple names/instances
+within one composite; crop coordinates are translated back to the source image.
+Humanoid prompts include catgirl/nekojin/anthropomorphic cat person and operators
+(rider/driver/motorcyclist/cyclist). Animals include horse/equine. Vehicle prompts
+include car/motorcycle/bicycle/truck/bus/scooter/boat/airplane. Food retains burger.
+The final 5% single-target naming fallback applies only AFTER component discovery.
+This is finite prompt-based identification, not unrestricted captioning.
+
+For newly proposed overlapping targets from different identity families, ask the
+existing SAM box-to-mask helper for individual masks and intersect with foreground.
+Never re-SAM an existing saved subject mask. If SAM fails or split masks still
+overlap, retain review-required drafts with explicit split error/conflict metadata;
+the selected inspector detection says Split unresolved or masks still overlap.
+SAM cannot guarantee correct separation of touching/occluded subjects.
+
+Superseded generic automatic draft group masks are retired only when multiple
+named targets cover at least 80% of their pixels. Approved/manual masks are not
+retired. Existing automatic Fashion/clothing draft cleanup from S2 remains.
+
+Bounded work: at most the eight largest significant foreground components receive
+the four-group naming audit (up to 32 extra YOLO calls per image). Initial whole-
+image detections and the existing fallback still handle other regions. Additional
+inference cost is expected; test selected images rather than the entire archive.
+
+Verified synthetic regression fixtures: a 95% merged Object splits into catgirl +
+horse and rider + motorcycle; independent multi-result crop pass and coordinate
+mapping; SAM callback masks split occupied pixels; inherited mask bypasses SAM;
+SAM failure remains an explicit draft; generic draft replacement coverage; two
+women + burger; actual pixel-area ranking; archive inheritance and draft cleanup.
+Python compilation, complete JS parsing, source-only ZIP CRC/SHA256 and patch
+application reconstruction passed. Real model inference compatibility was checked
+in S1; the new multi-category/SAM integration uses mocked model responses here.
+
+Limits: user screenshots/source generations and four real vehicle cases were not
+run through this patch here. GPU, actual SAM separation accuracy, physical UI and
+performance on the test spread need user confirmation. No live/GitHub changes.

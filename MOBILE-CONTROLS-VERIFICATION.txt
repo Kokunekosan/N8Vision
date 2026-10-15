@@ -1,0 +1,21 @@
+Z1a: mobile filter card and Clear Selected
+Apply over Z1: stop Vision, extract patch, restart, refresh phone/browser.
+No dependencies, downloads, images, models or archive state changed.
+
+Mobile Filters now closes the menu/settings card and opens as the foreground
+full-screen filter card. Header offers Menu (switch back) and Close (grid).
+Shared backdrop dismisses the active controls; opening menu/settings closes
+filters. Desktop retains the existing side drawer. Mobile filters do not force
+search focus/open the phone keyboard on entry. Accessible expanded/hidden states
+are updated. Small-width desktop also receives the compact layout.
+
+Clear Selected is at the upper left, directly below the hamburger; disabled
+when nothing is selected. Clears selected images, range-selection anchor and
+soft modifiers, using the same helper as desktop Escape. No grid reload, sorting
+change, filter clearing or image deletion. Counts/card selection update in place.
+
+Verified frontend syntax plus simulated mobile control flow: Menu->Filters
+closes old card, Filters->Menu switches back, shared backdrop state, clearing
+selection and anchor without grid reload. CSS responsive sizing/layering reviewed.
+Physical phone/portal rendering remains the user's check. ZIP CRC/hash and exact
+Z1 incremental reconstruction verified. No live source or GitHub edits.

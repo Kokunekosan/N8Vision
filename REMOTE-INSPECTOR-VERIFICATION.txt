@@ -1,0 +1,43 @@
+S5 remote inspector + fresh subject names
+
+Apply over S4. Stop Vision, extract, restart and refresh BOTH desktop and remote
+browser. No dependency installation. Existing paired credentials establish their
+media session during browser startup; if your nonpersistent pairing expired when
+the host restarted, pair again as normal. No live/GitHub changes.
+
+Root cause: inspector img requests had no X-N8Vision-Credential header, unlike
+JSON/thumbnail fetches. Remote network middleware returned 401. Added an explicitly
+credential-authenticated media-session endpoint: same-origin HttpOnly SameSite=Strict
+session cookie, Secure on HTTPS/reverse HTTPS. Middleware accepts that cookie only
+for /api/file, /api/thumb and /api/grid-overlay; general API/admin actions still
+require their existing header authorization. Revocation remains checked per request.
+Credentials are never appended to source-image URLs. No anonymous asset bypass.
+
+Inspector frame now fits known source dimensions (or provisional aspect ratio)
+before image data arrives, with visible outline and Loading source image message.
+Image readiness replaces provisional sizing; errors retain the frame and explain
+that the source failed to load. Narrow/mobile layout reserves space for the stage.
+
+Subject nouns no longer come from archived detections or manual labels. YOLAST
+performs fresh identification under the >=65 naming gate, otherwise unidentified.
+Archived masks can be reused only AFTER a fresh accepted name matches by label,
+location and pixels. Reusing mask pixels does not inherit the old detector score.
+Actual mask pixel ordering and separate human/object families remain: a large chair
+annotation cannot seed a chair name or displace the sitting person. Original
+manual/archive annotations are retained, rather than deleted or relabeled.
+
+Verified: actual ASGI remote image without credential returns401; valid media
+session/header + media cookie returns200 image bytes; invalid cookie rejected;
+media cookie alone cannot access observation API. Existing Lite archive/mask-edit
+checks pass. JS placeholder sizing before pixels and readiness tested; full JS
+parses. Fresh name/no inherited chair tests; matching old Woman mask reused with
+fresh80% name despite original40% score; no fresh noun remains unidentified;
+largest actual mask ranking, compound human/animal/vehicle splitting, 65% name gate
+and archive persistence regressions passed. Python compilation; source-only ZIP
+CRC/hash and incremental application reconstruction passed.
+
+Limits: no physical phone/public-tunnel UI check, GPU or full generation spread
+rerun performed here. Cookie-restricting browsers may need site cookie permission.
+Remote pairing expiration/revocation still requires re-pairing. A freshly inferred
+wrong >=65 noun can still pass; this patch removes inherited naming authority,
+not all classifier error. New subject hierarchy/anatomical ownership remains pending.

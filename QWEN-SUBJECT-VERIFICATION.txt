@@ -1,0 +1,45 @@
+Q1 — Comfy image-to-text subject review
+
+Apply over S6: stop Vision, extract this patch, restart Full and refresh browsers.
+No dependency install needed. Uses existing Comfy core LoadImage, CLIPLoader,
+TextGenerate (image input), PreviewAny. No new custom node or Comfy restart needed
+on the tested installed version. Other installations need those image-capable nodes.
+
+Choose an image-capable Qwen in Prompt Translator settings. The installed
+qwen3.5_2b_bf16.safetensors was verified with an actual queued image inference.
+Separate subjects first, select a small test spread, then press
+"Ask Qwen about selected subjects" in the Full subject section.
+Select a Subject detection in the inspector to read its Qwen draft: label,
+visible features, owned objects, evidence and uncertainties. Existing manual
+relabel action offers the draft noun; accepting it remains a user action.
+
+The workflow sends original context with a marked target plus its isolated
+visible mask pixels. It reads output directly from Comfy history, without a
+Comfy browser or websocket forwarding. API graph template is provided in
+n8vision/workflows/N8Subject-Qwen-Interpretation-API.json; Vision fills the
+selected model and uploaded montage dynamically. Each subject is a queued job
+in Comfy; Vision tracks the batch through its existing processing job panel.
+
+Queries use the existing configured Comfy environment and translator type/device.
+API POST /api/subjects/interpret accepts paths plus optional environment_id/model.
+Full only. At most 100 images and 200 subject masks per batch, sequential queries,
+10-minute waiting timeout per subject. Cancelling removes this query's pending
+Comfy prompt only; an already running prompt may finish without attaching results.
+Distinct montage uploads are retained in Comfy input/N8VisionSubjectQueries;
+content-derived filenames reuse identical inputs. No whole-archive query sweep.
+
+No automatic label changes or mask modifications. Draft owned_objects are text,
+not finalized ownership edges or an anatomical hierarchy. Qwen confidence is not
+treated as calibrated probability, and the YOLO naming threshold is unchanged.
+Malformed JSON is reported as failure. Source or observation changes during
+inference reject stale results. Existing selected-subject geometry is preserved.
+
+Verified: actual installed Qwen accepted image input and produced structured JSON
+for the N8 icon through the headless queue/history path. This proves integration,
+not classification accuracy on the generation spread. The icon reply misread N8
+as NB and described an annotation border; the final prompt explicitly excludes
+analysis markers and distinguishes physical owned objects from visual features.
+Python and frontend syntax, Full/Lite API gates, button dispatch/empty selection,
+structured reply validation, montage generation, draft persistence without label
+or mask mutation, and stale-observation rejection passed. ZIP CRC/hash and exact
+S6-to-Q1 incremental reconstruction verified. No live Vision or GitHub changes.

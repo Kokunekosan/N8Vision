@@ -277,6 +277,9 @@ body.touchGridEnabled #grid{touch-action:none}
 
 /* I.2j: one fitted image plane for pixels, masks, and selectable boxes */
 .viewerImageFrame{position:relative;flex:none;min-width:1px;min-height:1px}
+.viewerImageFrame[data-loading="true"]{outline:1px solid #5b5b68;background:#19191f}
+.viewerImageFrame[data-loading="true"]:after{content:attr(data-loading-message);position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;color:#bdbdc8;font-size:13px;pointer-events:none}
+@media(max-width:900px){.viewerWork{grid-template-rows:minmax(0,1fr) auto}}
 .viewerImageFrame>.viewerSource,.viewerImageFrame>.viewerSavedMasks{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:fill}
 .viewerImageFrame>.viewerSavedMasks{pointer-events:none}
 .viewerImageFrame>.teachOverlay{position:absolute;inset:0;width:100%;height:100%}
@@ -293,3 +296,35 @@ body[data-hide-badges="true"] #grid .geomOverlay{display:none!important}
 /* I.2t-k: display fit is explicit; pixel dimensions stay unchanged. */
 .maskCanvasStack{flex:none;display:block}
 .maskCanvasStack canvas,#maskCanvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none}
+
+/* Mobile columns retain image proportions; desktop sizing is unchanged. */
+body.mobileArchive .visualRow .card{min-width:0}
+body.mobileArchive #mobileColumnsLabel{display:block;margin-bottom:10px}
+body.mobileArchive #thumbSize{display:none}
+body.mobileWindowChanging #grid{pointer-events:none}
+body.mobileArchive #mobilePagingInfo{line-height:1.5;margin-bottom:8px}
+
+/* Edition capabilities follow the active server, not client preferences. */
+body.editionPending [data-capability],body[data-inference="false"] [data-capability="inference"],body[data-processing="false"] [data-capability="processing"]{display:none!important}
+body.visionAttention:after{content:"Vision is already running here";position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;background:#c6a43a;color:#171717;padding:14px 20px;border-radius:8px;pointer-events:none;animation:visionAttentionFlash .6s alternate infinite}
+@keyframes visionAttentionFlash{from{opacity:1}to{opacity:.35}}
+
+/* Independent framing: both pixel layers and geometry share one transform. */
+.inspectionFrameControls{position:absolute;left:10px;bottom:10px;z-index:6;display:flex;align-items:center;gap:8px;pointer-events:auto;color:#ddd;max-width:calc(100% - 20px)}
+.inspectionZoomRocker{display:flex;align-items:center;border:1px solid #555;border-radius:7px;background:#111e;overflow:hidden}
+.inspectionZoomRocker button{min-width:38px;min-height:38px;margin:0;border:0;border-radius:0;padding:6px 10px;font-size:17px}
+.inspectionZoomRocker output{min-width:52px;text-align:center;font-size:12px;padding:0 4px}
+.inspectionPanHint{font-size:11px;text-shadow:0 1px 3px #000;background:#111b;padding:4px;border-radius:4px}
+.inspectionPanStick{display:none;position:relative;width:70px;height:70px;flex:none;border:1px solid #777;border-radius:50%;background:#151515de;touch-action:none;user-select:none}
+.inspectionStickKnob{position:absolute;left:21px;top:21px;width:28px;height:28px;border-radius:50%;background:#9fa5b2;pointer-events:none}
+.viewerStage>.viewerImageFrame,.maskStage>.maskCanvasStack{transform-origin:center center;will-change:transform}
+#maskCanvas,.teachOverlay{touch-action:none}
+@media(any-pointer:coarse){.inspectionPanStick{display:block}.inspectionPanHint{display:none}.inspectionZoomRocker button{min-width:44px;min-height:44px}}
+
+#clearSelectedBtn,.filterDrawerHead{display:none}
+body.mobileArchive #clearSelectedBtn{display:block;position:fixed;top:55px;left:7px;z-index:110;min-height:40px;padding:6px 9px;font-size:11px;background:#282828ee}
+body.mobileArchive #filterDrawer{position:fixed;inset:0;width:100vw;height:100dvh;max-width:100vw;z-index:201;box-sizing:border-box;display:flex;flex-direction:column;padding-bottom:max(10px,env(safe-area-inset-bottom))}
+body.mobileArchive .filterDrawerHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none;margin-bottom:8px}
+body.mobileArchive .filterDrawerHead button{min-height:40px}
+body.mobileArchive #filterDrawer .magnetBoard{flex:1;min-height:120px;height:auto}
+@media(max-width:850px){#clearSelectedBtn{display:block;position:fixed;top:55px;left:7px;z-index:110;min-height:40px;padding:6px 9px;font-size:11px;background:#282828ee}#filterDrawer{position:fixed;inset:0;width:100vw;height:100dvh;max-width:100vw;z-index:201;box-sizing:border-box;display:flex;flex-direction:column;padding-bottom:max(10px,env(safe-area-inset-bottom))}.filterDrawerHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none;margin-bottom:8px}.filterDrawerHead button{min-height:40px}#filterDrawer .magnetBoard{flex:1;min-height:120px;height:auto}}

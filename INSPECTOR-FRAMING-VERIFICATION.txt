@@ -1,0 +1,35 @@
+Z1: inspector and mask-studio zoom / pan
+Apply over T2a: stop Vision, extract patch, restart, refresh browsers.
+No new dependencies or model downloads. All editions get framing controls.
+
+Both inspection source frame and mask-studio crop have minus/plus rocker, relative
+zoom percentage and Fit reset. Range25%-1600% of the initially fitted view.
+W/A/S/D moves displayed content up/left/down/right; held keys pan smoothly.
+Touch/coarse-pointer devices show an analog soft stick beside the rocker.
+Release, pointer cancellation and focus/window loss stop movement. Inputs,
+textareas, selectors and editable text retain their keys; browser Ctrl zoom stays.
+Clicking the workspace restores framing-key focus without scrolling the page.
+Touch controls do not paint or begin bounding boxes. Active paint/box strokes
+pause framing changes so source coordinates remain stable during a stroke.
+
+Image, saved-mask overlay and SVG detections move as one shared transformed frame.
+Mask reference and painting canvas likewise share one transformed crop stack.
+Zoom/pan never change source canvas dimensions, RLE pixels, brush units, geometry
+or API payloads; no source reload or repaint caused by framing itself.
+Existing paint coordinate calculation uses transformed canvas bounds; existing
+box calculation uses SVG screen-matrix inverse. Brush size stays in source pixels.
+Zoom preserves the current center target; Fit centers and resets to fitted view.
+Bounds keep part of the surface reachable. Recent40 image/crop framings retained
+in memory, independently for inspector and mask crop, including normal reopen
+following label edits. New images/crops begin fitted. No persistent machine state.
+Resize/refit preserves normalized framing. Closing/switching disposes controls,
+keyboard listeners and animation frames; mask paste handler also cleaned on Esc.
+
+Verified frontend syntax/load order; camera DOM/RAF tests: zoom bounds/Fit, WASD,
+typing protection, painting-stroke pause, exact existing paint-coordinate mapping
+under zoom/pan, touch stick/release, framing restore and listener/RAF disposal.
+These are simulated DOM and coordinate tests; physical desktop/touch rendering
+and end-to-end SVG drawing/painting remain user checks. No native UI launched.
+ZIP CRC/hash and exact T2a incremental reconstruction verified. No models,
+images, learned weights, private configs or archive DBs bundled. No live or GitHub
+source changes. Previous T2a queue/light/snapshot fix remains included.

@@ -1,0 +1,30 @@
+T1a — explicit mask role and ownership pause
+
+Apply over T1: stop Vision, extract patch, restart, refresh browsers.
+No new dependencies or model downloads.
+
+Save Mask now pauses before saving: Keep standalone, Attach to chosen subject,
+or Cancel. The owner dropdown begins empty, even if there is only one subject.
+Different instances with equal labels are numbered, and selecting one highlights
+its box over the cached source thumbnail. No separate thumbnail archive.
+Escape/cancel returns to the unsaved mask editor; it does not close the inspector.
+Existing Subject mask edits offer Keep existing Subject and cannot be nested as
+a part. With no masked subjects, an ordinary mask can still be saved standalone.
+
+Only explicit attachment writes subject_parts and enables Learn Subject on that
+owner. Standalone masks do not create teaching candidates. Training still needs
+a separate Learn Subject commitment. Add part to subject uses this same dialog
+instead of the old numbered text prompt. Automatic inference never opens it.
+
+Owner/part identity is checked against current archive observations. If an owner
+changes while the dialog is open, attachment fails visibly and the mask remains
+saved without a new ownership assignment. No nearest-person/default-owner guess.
+Part attachment is still manual; automatic reconstruction/training backend pending.
+
+Verified: frontend syntax, explicit no-default-owner choice, standalone, selecting
+the second identically named subject, cancel and existing Subject protection.
+Mask-save flow: cancel makes no writes, standalone saves only the mask, explicit
+owner saves the mask then attaches to that exact subject without training.
+Existing manual eligibility/ownership/stale/commit API regressions passed.
+ZIP CRC/hash and exact T1 incremental reconstruction verified. Physical browser
+and phone UI remain to check. No live/GitHub changes.

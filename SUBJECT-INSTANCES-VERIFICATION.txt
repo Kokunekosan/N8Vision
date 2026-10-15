@@ -1,0 +1,36 @@
+S6 — one Subject frame per instance
+
+Apply over S5. Stop Vision, extract, restart Full and refresh the remote browser.
+No dependency installation. Rerun the selected test spread to reconcile old drafts.
+
+Subject identity is spatial, not its noun. Hamburger/sandwich/food and unidentified
+guesses can describe the same pixels; they must not create separate subject frames.
+Added post-segmentation complete-link clustering by pixel IoU (>=90%, or >=65% with
+box IoU>=50%). Every member must match every other member, so a bridging box cannot
+chain two different people together. Preserve largest/known mask geometry and best
+name proposal within one instance, then apply the existing >=65% naming gate.
+
+Ambiguous overlap between SAME-family targets now invokes individual SAM attempts
+too. Only almost-identical fresh proposals are collapsed before that stage; merely
+overlapping person boxes get a chance to resolve into distinct masks. Reused saved
+masks are not re-SAMed. Distinct pixel masks survive even with strongly overlapping
+boxes. Clothing/face annotations remain ordinary detections.
+
+After each image's successful processing, reconcile persisted subject-role masks,
+including old versions and rejected nouns. Current-run canonical masks take priority.
+Redundant automatic drafts are removed. Manual/approved pixels and annotation labels
+are preserved; when redundant, only their extra Subject role is cleared. Frontend
+and server overlay respect explicit subject_role=False. Ordinary detector annotations
+are not deduplicated or deleted. Remaining real overlaps still show review metadata.
+
+Verified: three burger noun/unnamed proposals -> one instance; same woman twice ->
+one, second woman preserved; distinct masks survive overlapping boxes; persisted
+cross-version aliases collapse to one and stay stable on rerun; approved annotation
+protection; existing composite/name-gate/mask-inheritance regressions and Python/JS
+syntax passed. Source-only ZIP CRC/hash and incremental application reconstruction
+verified. Your original generation spread/GPU/physical UI was not rerun here.
+
+Limits: spatial clustering remains a heuristic. If SAM cannot distinguish touching
+subjects, the mask geometry may still be wrong; this does not invent hidden pixels.
+Original plain detector boxes remain visible alongside the single Subject frame.
+More SAM work may be needed for ambiguous same-family overlaps. No live/GitHub writes.

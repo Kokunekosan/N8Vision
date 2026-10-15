@@ -1,0 +1,6 @@
+# Full extends Blurred with BiRefNet runtime dependencies.
+-r requirements-blurred.lock
+einops==0.8.2
+kornia==0.8.3
+kornia-rs==0.1.15
+clip @ git+https://github.com/ultralytics/CLIP.git@a13192f8cb767260d7dfd98c843b0716593169e7

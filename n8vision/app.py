@@ -4,16 +4,21 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 from send2trash import send2trash
+from .profiles import profile,route_capability,missing_modules
+EDITION=profile()
+_missing=missing_modules(EDITION['edition'])
+if _missing:raise RuntimeError("N8Vision edition dependencies missing: "+", ".join(_missing))
 
 ROOT=Path(__file__).resolve().parent.parent; STATIC=ROOT/'static'; DATA=ROOT/'data'; DATA.mkdir(exist_ok=True)
 MODELS=Path(__file__).resolve().parent/'models'; ULTRA_MODELS=MODELS/'ultralytics'
 CACHE=ROOT/'cache'; HF_CACHE=CACHE/'huggingface'; HF_CACHE.mkdir(parents=True,exist_ok=True)
 # Keep downloaded Hub assets with N8Vision instead of the user's C: profile.
+os.environ.setdefault('HF_TOKEN_PATH',str(Path(os.environ.get('HF_HOME') or Path.home()/'.cache/huggingface')/'token'))
 os.environ.setdefault('HF_HOME',str(HF_CACHE))
 os.environ.setdefault('HF_HUB_CACHE',str(HF_CACHE/'hub'))
 os.environ.setdefault('TRANSFORMERS_CACHE',str(HF_CACHE/'transformers'))
@@ -26,6 +31,28 @@ LOG.info('Persistent Hugging Face cache: %s',HF_CACHE)
 (ULTRA_MODELS/'bbox').mkdir(parents=True,exist_ok=True); (ULTRA_MODELS/'seg').mkdir(parents=True,exist_ok=True)
 MASTER_DB_PATH=DATA/'n8vision.sqlite3'; SESSIONS=DATA/'sessions'; SESSIONS.mkdir(exist_ok=True); LENS_CONFIG_PATH=DATA/'lens_config.json'; IMAGE_EXTS={'.png','.jpg','.jpeg','.webp','.gif','.bmp','.tif','.tiff','.avif'}
 app=FastAPI(title='N8Vision',version='I.2b'); app.mount('/static',StaticFiles(directory=STATIC),name='static')
+@app.middleware('http')
+async def edition_capabilities(request:Request,call_next):
+ capability=route_capability(request.url.path,request.method)
+ if capability and not EDITION[capability]:
+  return Response(json.dumps({'detail':f"{EDITION['name']} does not enable {capability}. Start Blurred or Full to use it."}),status_code=403,media_type='application/json')
+ return await call_next(request)
+
+@app.get('/api/edition')
+def edition_info():return {**EDITION,'version':'I.2t-l-Z1a','subject_intelligence_available':EDITION['subject_intelligence']}
+
+LOCAL_ATTENTION=0
+@app.get('/api/instance')
+def instance_info():return {'program':'N8Vision','edition':EDITION['edition'],'pid':os.getpid()}
+
+@app.get('/api/instance/attention')
+@app.post('/api/instance/attention')
+def instance_attention(request:Request):
+ global LOCAL_ATTENTION
+ if not _is_loopback(request.client.host if request.client else None) or _public_request(request):raise HTTPException(403,'Host-local attention only')
+ if request.method=='POST':LOCAL_ATTENTION+=1
+ return {'sequence':LOCAL_ATTENTION}
+
 JOBS:dict[str,dict[str,Any]]={}; LOCK=threading.Lock(); MODEL_CACHE={}
 OUTPUT_RECOVERY_LOCK=threading.RLock()
 PENDING_COMFY_OUTPUTS:dict[str,dict[str,Any]]={}
@@ -229,6 +256,8 @@ def _public_request(request:Request)->bool:
 async def network_auth(request:Request,call_next):
  path=request.url.path
  token=request.headers.get('X-N8Vision-Credential')
+ if not token and path in {'/api/file','/api/grid-overlay','/api/thumb'}:
+  token=request.cookies.get('n8vision_media')
  # Host authorization is an explicit one-time console secret; never localhost inference.
  if path=='/api/network/admin/bootstrap':return await call_next(request)
  admin_paths={'/api/network/settings','/api/network/pairing','/api/network/revoke-all',
@@ -244,6 +273,15 @@ async def network_auth(request:Request,call_next):
   return await call_next(request)
  if not _credential_ok(token):return Response('N8Vision device pairing required',status_code=401)
  return await call_next(request)
+
+@app.post('/api/network/media-session')
+def media_session(request:Request):
+ token=request.headers.get('X-N8Vision-Credential')
+ if not _credential_ok(token):raise HTTPException(401,'Valid device pairing required')
+ response=JSONResponse({'ok':True},headers={'Cache-Control':'no-store'})
+ secure=request.url.scheme=='https' or (_public_request(request) and request.headers.get('X-Forwarded-Proto','').lower()=='https')
+ response.set_cookie('n8vision_media',token,httponly=True,secure=secure,samesite='strict',path='/api/')
+ return response
 
 class NetworkSettingsRequest(BaseModel):
  enable_lan:bool
@@ -761,11 +799,11 @@ def startup_reconcile():
    try:_start_public_tunnel()
    except Exception as e:LOG.warning('Public portal auto-start failed: %s',e)
   threading.Thread(target=_public_boot,name='n8-public-start',daemon=True).start()
- threading.Thread(target=_startup_comfy_tool_shelf_scan,name='n8vision-comfy-shelf-scan',daemon=True).start()
+ if EDITION['processing']:threading.Thread(target=_startup_comfy_tool_shelf_scan,name='n8vision-comfy-shelf-scan',daemon=True).start()
  # Presence verification used to start immediately and hammer the same filesystem while the
  # first recursive browse was trying to enumerate it. Defer it until the client has a stable grid.
  threading.Thread(target=_cache_maintenance,name='n8vision-cache-maintenance',daemon=True).start()
- threading.Thread(target=_background_brisque_service,name='n8vision-background-observations',daemon=True).start()
+ if EDITION['inference']:threading.Thread(target=_background_brisque_service,name='n8vision-background-observations',daemon=True).start()
 
 @app.get('/api/launch-verification')
 def launch_verification():
@@ -877,7 +915,7 @@ def restart_server():
   raise
  def relaunch():
   time.sleep(.35)
-  args=[sys.executable,str(ROOT/'run.py'),'--no-browser','--port',str(os.environ.get('N8VISION_PORT','8189'))]
+  args=[sys.executable,str(ROOT/'run.py'),'--no-browser','--instance-restart','--edition',EDITION['edition'],'--port',str(os.environ.get('N8VISION_PORT','8189'))]
   host=os.environ.get('N8VISION_BIND_HOST')
   if host:args.extend(['--host',host])
   os.execv(sys.executable,args)
@@ -1035,6 +1073,7 @@ def module(name):
   m=__import__(name); return True,getattr(m,'__version__','installed')
  except Exception as e:return False,str(e)
 def hardware_status():
+ if not EDITION['inference']:return {'cpu':{'logical':os.cpu_count() or 1},'accelerator':{'kind':'cpu','available':False,'reason':'Inference disabled in Lite'}}
  out={'cpu':{'logical':os.cpu_count() or 1},'accelerator':{'kind':'cpu','available':False}}
  try:
   import torch
@@ -1077,6 +1116,7 @@ def _yuan_device_report(extractor):
  return out
 
 def provider_status():
+ if not EDITION['inference']:return [{'id':'archive','name':'Archive and filesystem','installed':True,'detail':'Lite: inference environments are not initialized'}]
  out=[]
  for ident,name,mods in [('clip','CLIP classification + embeddings',['torch','transformers']),('quality','Yuan image quality (1–10)',['torch','huggingface_hub','safetensors']),('faiss','FAISS vector search',['faiss']),('yolo','Ultralytics detector / segmenter',['ultralytics']),('sam','SAM box-to-mask segmentation',['torch','transformers'])]:
   checks=[module(x) for x in mods]
@@ -1157,7 +1197,8 @@ def obs_for(paths,prefix=None):
     marks=','.join('?'*len(chunk))
     rows=c.execute(f'SELECT path,concept,confidence,provider,model,kind,geometry FROM observations WHERE path IN ({marks})',chunk).fetchall()
     for r in rows:obs[r['path']].append(dict(r))
- return obs
+ from .observation_display import annotate
+ return {path:annotate(rows) for path,rows in obs.items()}
 # P.29 chunk-pipe browse sessions.  The old monolithic /api/browse remains below as a
 # compatibility path, but the web client uses start/chunk so large libraries never have to
 # survive one enormous JSON response.  Prepared chunks are bounded and disposable.
@@ -1190,6 +1231,7 @@ def _noticer_register(watcher):
  return inserted
 
 def _noticer_inspections():
+ if not EDITION['inference']:return None
  with INSPECTION_INTAKE_LOCK:return _noticer_inspections_locked()
 
 def _noticer_inspections_locked():
@@ -1261,7 +1303,15 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    for x in paths:
     try:st=x.stat()
     except (FileNotFoundError,PermissionError,OSError):continue
-    records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime})
+    record={'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime}
+    if BROWSE_SESSIONS.get(token,{}).get('mobile'):
+     try:
+      with Image.open(x) as image:
+       w,h=image.size
+       if image.format in {'JPEG','TIFF','WEBP'} and image.getexif().get(274,1) in (5,6,7,8):w,h=h,w
+      record.update(width=w,height=h)
+     except (OSError,ValueError):pass
+    records.append(record)
    if records:
     obs=obs_for([x['path'] for x in records])
     for x in records:x['observations']=obs.get(x['path'],[])
@@ -1302,19 +1352,23 @@ def directories(path:str=Query(...)):
  return {'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs]}
 
 @app.get('/api/browse/start')
-def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query('')):
+def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query(''),mobile:bool=False,previous_tx:str=Query('')):
  p=norm(path);tx=tx or uuid.uuid4().hex
  if not p.exists() or not p.is_dir():raise HTTPException(404,'Directory not found')
  _browse_gate_begin(tx,str(p),recursive)
  try:dirs=sorted((x for x in p.iterdir() if x.is_dir()),key=lambda x:x.name.casefold())
  except PermissionError:
   _browse_gate_stable(tx);raise HTTPException(403,'Permission denied')
- # A new browse supersedes older preparation work.  Its already-returned packets remain harmless
- # because the client accepts only its current transaction id.
+ # Desktop preparation retains its existing supersession behavior. Mobile snapshots remain
+ # available for reverse paging until their caller explicitly replaces its previous transaction.
  with BROWSE_SESSIONS_LOCK:
   for old,sess in list(BROWSE_SESSIONS.items()):
-   if old!=tx:sess['cancelled']=True
-  BROWSE_SESSIONS[tx]={'path':str(p),'recursive':recursive,'chunks':[],'complete':False,'error':None,'prepared':0,'cancelled':False,'updated':time.monotonic()}
+   if old!=tx and not sess.get('mobile'):sess['cancelled']=True
+  if mobile and previous_tx and previous_tx!=tx:
+   previous=BROWSE_SESSIONS.get(previous_tx)
+   if previous and previous.get('mobile'):
+    previous['cancelled']=True;previous['chunks'].clear()
+  BROWSE_SESSIONS[tx]={'path':str(p),'recursive':recursive,'mobile':mobile,'chunks':[],'complete':False,'error':None,'prepared':0,'cancelled':False,'updated':time.monotonic()}
  threading.Thread(target=_browse_chunk_worker,args=(tx,p,recursive),name=f'browse-{tx[:8]}',daemon=True).start()
  LOG.info('Browse chunk pipe opened: tx=%s · %s · recursive=%s · bite=%d',tx,p,recursive,BROWSE_CHUNK_SIZE)
  return {'browse_tx':tx,'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs],'recursive':recursive,'chunk_size':BROWSE_CHUNK_SIZE}
@@ -1428,10 +1482,92 @@ def correct_observation(req:ObservationCorrectionRequest):
   c.execute('INSERT INTO corrections(path,original_concept,original_provider,original_model,original_kind,geometry,action,corrected_concept) VALUES(?,?,?,?,?,?,?,?)',
     (str(p),req.concept,req.provider,req.model,req.kind,req.geometry,req.action,corrected or None))
   if req.action=='relabel':
+   from .subject_learning import geometry as learning_geometry,is_subject,mark_manual
+   corrected_geometry=req.geometry
+   if corrected!=req.concept and is_subject({'geometry':req.geometry,'provider':req.provider}):
+    corrected_geometry=json.dumps(mark_manual(learning_geometry(req.geometry),'label_changed',corrected,req.concept),sort_keys=True,separators=(',',':'))
    c.execute('INSERT OR REPLACE INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,?,?,?,?,?,?,unixepoch())',
-     (str(p),corrected,1.0,'human-correction',f'relabel:{req.provider}:{req.model}',req.kind,req.geometry))
+     (str(p),corrected,1.0,'human-correction',f'relabel:{req.provider}:{req.model}',req.kind,corrected_geometry))
  bump_obs_revision()
  return {'ok':True,'action':req.action,'corrected_concept':corrected or None,'revision':OBS_REV}
+
+class SubjectObservationRef(BaseModel):
+ path:str
+ concept:str
+ provider:str
+ model:str
+ kind:str
+ geometry:str|None=None
+
+def subject_observation(c,ref):
+ row=c.execute('SELECT rowid AS oid,* FROM observations WHERE path=? AND concept=? AND provider=? AND model=? AND kind=? AND geometry IS ? AND confidence>0',
+  (str(norm(ref.path)),ref.concept,ref.provider,ref.model,ref.kind,ref.geometry)).fetchone()
+ if not row:raise HTTPException(409,'Observation changed; refresh and select it again')
+ return dict(row)
+
+@app.post('/api/observations/learn-subject')
+def learn_subject(req:SubjectObservationRef):
+ from .subject_learning import learn
+ path=norm(req.path)
+ if not image_file(path):raise HTTPException(404,'Image not found')
+ try:
+  with db() as c:result=learn(c,subject_observation(c,req),path,subject_class_root())
+ except ValueError as exc:raise HTTPException(409,str(exc))
+ bump_obs_revision()
+ if EDITION['subject_intelligence'] and result.get('class_registered') and subject_class_settings()['auto_train']:schedule_subject_class_training()
+ return result
+
+class SubjectPartRequest(BaseModel):
+ subject:SubjectObservationRef
+ part:SubjectObservationRef
+
+@app.post('/api/observations/subject-part')
+def add_subject_part(req:SubjectPartRequest):
+ from .subject_learning import geometry as learning_geometry,is_subject,mark_manual,identity
+ if str(norm(req.subject.path))!=str(norm(req.part.path)):raise HTTPException(400,'Parts must come from the same image')
+ with db() as c:
+  subject=subject_observation(c,req.subject);part=subject_observation(c,req.part)
+  if not is_subject(subject) or subject['kind']!='mask':raise HTTPException(400,'Choose a masked Subject as owner')
+  if subject['oid']==part['oid'] or is_subject(part) or part['kind']!='mask':raise HTTPException(400,'Choose an ordinary part mask, not another Subject')
+  g=learning_geometry(subject['geometry']);pg=learning_geometry(part['geometry'])
+  size=g.get('source_size')
+  box=pg.get('bbox');ms=pg.get('mask_size');runs=pg.get('mask_rle')
+  valid=bool(size and box and ms and isinstance(runs,list) and runs and len(runs)%2==0)
+  if valid:
+   try:
+    x1,y1,x2,y2=box;valid=(0<=x1<x2<=size[0] and 0<=y1<y2<=size[1] and ms==[round(x2-x1),round(y2-y1)] and all(isinstance(s,int) and isinstance(n,int) and s>=0 and n>0 and s+n<=ms[0]*ms[1] for s,n in zip(runs[::2],runs[1::2])))
+   except (TypeError,ValueError):valid=False
+  if not valid:raise HTTPException(400,'Part needs valid mask pixels')
+  key=identity(part);parts=list(g.get('subject_parts',[]))
+  existing=next((item for item in parts if item.get('id')==key),None)
+  if existing and existing.get('confirmation')!='machine-draft':raise HTTPException(409,'Part already belongs to this subject')
+  from .subject_learning import add_visible_pixels
+  g.setdefault('subject_id',__import__('uuid').uuid4().hex)
+  for other in c.execute('SELECT rowid AS oid,* FROM observations WHERE path=? AND confidence>0',(subject['path'],)).fetchall():
+   if other['oid']==subject['oid']:continue
+   old=learning_geometry(other['geometry']);owned=list(old.get('subject_parts',[]))
+   matched=[item for item in owned if item.get('id')==key]
+   if not matched:continue
+   if any(item.get('confirmation')!='machine-draft' for item in matched):raise HTTPException(409,'Part already has a manually confirmed owner')
+   remaining=[item for item in owned if item.get('id')!=key]
+   base=old.get('base_geometry')
+   if not base:raise HTTPException(409,'Original owner mask unavailable; redraw its mask before reassignment')
+   rebuilt=dict(old)
+   for field in ('bbox','mask_size','mask_rle','polygon'):rebuilt.pop(field,None)
+   rebuilt.update(base);rebuilt['subject_parts']=remaining
+   for item in remaining:rebuilt=add_visible_pixels(rebuilt,item['geometry'])
+   rebuilt.setdefault('ownership_corrections',[]).append({'part_id':key,'new_owner_subject_id':g['subject_id'],'confirmation':'manual'})
+   c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=?',(json.dumps(rebuilt,sort_keys=True,separators=(',',':')),other['oid']))
+  if existing:existing['confirmation']='manual'
+  else:parts.append({'id':key,'concept':part['concept'],'provider':part['provider'],'model':part['model'],'geometry':pg,'confirmation':'manual'})
+  for item in parts:item['owner_subject_id']=g['subject_id']
+  g['subject_parts']=parts
+  try:g=add_visible_pixels(g,pg)
+  except ValueError as exc:raise HTTPException(400,str(exc))
+  g=mark_manual(g,'part_added',subject['concept'])
+  c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',
+   (json.dumps(g,sort_keys=True,separators=(',',':')),subject['oid'],subject['geometry']))
+ bump_obs_revision();return {'ok':True,'geometry':g}
 
 @app.post('/api/observations/teach')
 def teach_concept(req:TeachConceptRequest):
@@ -1468,6 +1604,16 @@ def teach_concept(req:TeachConceptRequest):
    if (req.geometry or {}).get('method'):geom['method']=req.geometry['method']
    geom['review_status']='approved'
   else:geom={'bbox':[x1,y1,x2,y2],'source_size':[w,h],'scope':'bbox'}
+ if scope=='mask':
+  metadata=dict(req.geometry or {})
+  if req.replace_observation:
+   old_geometry=req.replace_observation.get('geometry') or {}
+   try:old_geometry=json.loads(old_geometry) if isinstance(old_geometry,str) else old_geometry
+   except (TypeError,ValueError):old_geometry={}
+   for key in ('subject_role','subject_pipeline','birefnet_revision','subject_learning','subject_parts','subject_id','subject_composite_ready','subject_backend','base_geometry'):
+    if key in old_geometry:metadata[key]=old_geometry[key]
+  for key in ('subject_role','subject_pipeline','birefnet_revision','subject_learning','subject_parts','subject_id','subject_composite_ready','subject_backend','base_geometry'):
+   if key in metadata:geom[key]=metadata[key]
  gj=json.dumps(geom,separators=(',',':'),sort_keys=True)
  with db() as c:
   # Replace only the explicitly selected mask, never a neighboring detection.
@@ -1497,14 +1643,38 @@ def observations(req:ObservationRequest):
     marks=','.join('?'*len(chunk))
     rows=c.execute(f"SELECT path,concept,confidence,provider,model,kind,geometry FROM observations WHERE path IN ({marks})",chunk).fetchall()
     for r in rows:out.setdefault(r['path'],[]).append(dict(r))
+ from .observation_display import annotate
+ out={path:annotate(rows) for path,rows in out.items()}
  return {'revision':OBS_REV,'observations':out}
+
+class DetectorCleanupRequest(BaseModel):
+ token:str
+ include_reviewed:bool=False
+
+@app.get('/api/maintenance/removed-detectors')
+def removed_detector_preview(include_reviewed:bool=False):
+ from .detector_cleanup import preview
+ with db() as c:_,summary=preview(c,ROOT,ULTRA_MODELS,include_reviewed)
+ return summary
+
+@app.post('/api/maintenance/removed-detectors')
+def removed_detector_cleanup(req:DetectorCleanupRequest):
+ from .detector_cleanup import preview,detach_removed
+ with db() as c:
+  if not c.in_transaction:c.execute('BEGIN IMMEDIATE')
+  rows,summary=preview(c,ROOT,ULTRA_MODELS,req.include_reviewed)
+  if summary['token']!=req.token:raise HTTPException(409,'Detector records or installed files changed; preview cleanup again')
+  if req.include_reviewed:detach_removed(c,rows)
+  for row in rows:c.execute('DELETE FROM observations WHERE rowid=?',(row['oid'],))
+ if rows:bump_obs_revision()
+ return {**summary,'deleted':len(rows),'revision':OBS_REV}
 
 @app.get('/api/tags/discovered')
 def discovered_tags():
  # Vocabulary comes only from positive observations actually discovered in the library.
  # Model class dictionaries and zero-confidence receipts never leak into the filter picker.
  with db() as c:
-  rows=c.execute("SELECT concept,provider,model,COUNT(*) AS detections,MAX(confidence) AS confidence FROM observations WHERE kind!='receipt' AND confidence>0 GROUP BY concept,provider,model ORDER BY concept COLLATE NOCASE,provider,model").fetchall()
+  rows=c.execute("SELECT concept,provider,model,kind,COUNT(*) AS detections,MAX(confidence) AS confidence FROM observations WHERE kind!='receipt' AND confidence>0 GROUP BY concept,provider,model,kind ORDER BY concept COLLATE NOCASE,provider,model").fetchall()
  return {'tags':[dict(r) for r in rows]}
 
 @app.get('/api/thumb')
@@ -1559,7 +1729,8 @@ def _grid_overlay_rows(path:str,kind:str):
  with db() as c:
   rows=c.execute("SELECT concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind IN ('bbox','mask') AND confidence>0 AND geometry IS NOT NULL",(path,)).fetchall()
  out=[]
- for r in rows:
+ from .observation_display import display_rows
+ for r in display_rows(rows):
   try:g=json.loads(r['geometry']) if isinstance(r['geometry'],str) else (r['geometry'] or {})
   except Exception:continue
   if kind=='boxes' and not g.get('bbox'):continue
@@ -1592,7 +1763,12 @@ def grid_overlay(path:str=Query(...),kind:str=Query(...)):
     bits=[f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {tw} {th}" preserveAspectRatio="xMidYMid meet">']
     for r,g in rows:
      x1,y1,x2,y2=map(float,g['bbox']);x1*=scale;y1*=scale;x2*=scale;y2*=scale
-     rr,gg,bb=_overlay_color(r['provider'],r['model']);c=f'rgb({rr},{gg},{bb})';label=f"{r['concept']} {round(float(r['confidence'])*100)}%"
+     rr,gg,bb=_overlay_color(r['provider'],r['model']);c=f'rgb({rr},{gg},{bb})'
+     concept=r['concept']
+     if g.get('subject_role') is not False and (g.get('subject_role') or g.get('subject_pipeline') or r['provider']=='subject-intelligence'):
+      concept='Subject — '+('Unidentified' if concept.casefold()=='unidentified subject' else concept)
+     score=float(g.get('name_confidence',r['confidence'])) if g.get('name_accepted') else float(r['confidence'])
+     label=f"{concept} {round(score*100)}%"
      import html
      bits.append(f'<rect x="{x1:.2f}" y="{y1:.2f}" width="{max(0,x2-x1):.2f}" height="{max(0,y2-y1):.2f}" fill="none" stroke="{c}" stroke-width="2"/>')
      bits.append(f'<text x="{x1+2:.2f}" y="{max(10,y1+10):.2f}" fill="{c}" stroke="black" stroke-width="2" paint-order="stroke" font-family="sans-serif" font-size="9">{html.escape(label)}</text>')
@@ -3019,6 +3195,387 @@ def compare_duplicates(req:DuplicateRequest):
  except HTTPException:raise
  except Exception as e:raise HTTPException(500,f'Duplicate analysis failed: {e}')
 
+class SubjectRequest(BaseModel):
+ paths:list[str]
+ classes:list[str]=[]
+
+SUBJECT_JOB_LOCK=threading.Lock()
+def subject_paths(payload,progress=None):
+ from .subjects import analyze,matching_annotation,rle,DEFAULT_CLASSES,REVISION,PIPELINE,target_label,superseded_composite,NAME_MIN_CONFIDENCE,duplicate_subject_rows
+ created=0;inherited=0;attached=0;retired=0;failed=[]
+ classes=list(dict.fromkeys(x.strip() for x in payload['classes'] if x.strip())) or _load_config().get('yolo',{}).get('world_classes') or DEFAULT_CLASSES
+ # Serialize read/compare/write across subject jobs; never hold the DB during inference.
+ with SUBJECT_JOB_LOCK:
+  for index,raw in enumerate(payload['paths']):
+   if progress:progress(index,len(payload['paths']))
+   p=norm(raw)
+   if not image_file(p):failed.append({'path':str(p),'error':'Image not found'});continue
+   try:
+    before=p.stat();source_signature=(before.st_mtime_ns,before.st_size)
+    with db() as c:
+     existing=[dict(row) for row in c.execute("SELECT rowid AS oid,concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind IN ('bbox','mask') AND confidence>0",(str(p),)).fetchall()]
+    candidates,shape=analyze(p,HF_CACHE,ULTRA_MODELS/'bbox'/'yolov8s-worldv2.pt',classes,existing,lambda box:_sam_box_geometry(p,box))
+    after=p.stat()
+    if (after.st_mtime_ns,after.st_size)!=source_signature:raise RuntimeError('Image changed during subject separation; retry it')
+    if progress:progress(index,len(payload['paths'])) # cancellation before persistence
+    changed=False;used=set()
+    with db() as c:
+     rows=[dict(row) for row in c.execute("SELECT rowid AS oid,concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind IN ('bbox','mask') AND confidence>0",(str(p),)).fetchall()]
+     removed_ids=set()
+     for row in rows:
+      try:old_geometry=json.loads(row['geometry'])
+      except (TypeError,ValueError):continue
+      if row['provider']!='subject-intelligence':
+       trusted=bool(re.match(r'^(human|user|manual)(?:$|[-_:])',row['provider'],re.I)) or old_geometry.get('review_status')=='approved'
+       accepted_score=float(old_geometry.get('name_confidence',row['confidence'])) if old_geometry.get('name_accepted') else float(row['confidence'])
+       if not trusted and accepted_score<NAME_MIN_CONFIDENCE and (old_geometry.get('subject_role') or old_geometry.get('subject_pipeline')):
+        marked={key:value for key,value in old_geometry.items() if key not in ('subject_role','subject_pipeline')}
+        encoded=json.dumps(marked,sort_keys=True,separators=(',',':'))
+        c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',(encoded,row['oid'],row['geometry']))
+        row['geometry']=encoded;changed=True
+       continue
+      if old_geometry.get('review_status')=='draft' and target_label(row['concept']) and float(row['confidence'])<NAME_MIN_CONFIDENCE:
+       marked={**old_geometry,'proposed_concept':row['concept'],'name_confidence':float(row['confidence']),'name_min_confidence':NAME_MIN_CONFIDENCE,'name_accepted':False}
+       encoded=json.dumps(marked,sort_keys=True,separators=(',',':'))
+       c.execute("UPDATE observations SET concept='unidentified subject',geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?",(encoded,row['oid'],row['geometry']))
+       row['concept']='unidentified subject';row['geometry']=encoded;old_geometry=marked;changed=True
+      if old_geometry.get('method') not in ('birefnet','birefnet+sam') or old_geometry.get('review_status')!='draft':continue
+      excluded=not target_label(row['concept']) and row['concept'].casefold()!='unidentified subject'
+      if not excluded and not superseded_composite(row['concept'],old_geometry,candidates,shape):continue
+      removed=c.execute('DELETE FROM observations WHERE rowid=? AND geometry IS ?',(row['oid'],row['geometry'])).rowcount
+      retired+=removed;changed=changed or bool(removed)
+      if removed:removed_ids.add(row['oid'])
+     rows=[row for row in rows if row['oid'] not in removed_ids and (target_label(row['concept']) or row['concept'].casefold()=='unidentified subject')]
+     for candidate in candidates:
+      match=matching_annotation(candidate,rows,shape,used)
+      if match and match[2]:
+       row,old,_=match;used.add(row['oid']);inherited+=1
+       marked={**old,'subject_role':True,'subject_pipeline':old.get('subject_pipeline') or PIPELINE}
+       for key in ('name_confidence','name_min_confidence','name_accepted','proposed_concept'):
+        if key in candidate:marked[key]=candidate[key]
+       if marked!=old:
+        encoded=json.dumps(marked,sort_keys=True,separators=(',',':'))
+        updated=c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',(encoded,row['oid'],row['geometry']))
+        if updated.rowcount!=1:raise RuntimeError('Annotation changed during subject marking')
+        changed=True
+       continue
+      x1,y1,x2,y2=candidate['bbox']
+      mask=candidate['mask'][y1:y2,x1:x2]
+      geometry={'bbox':candidate['bbox'],'mask_size':[x2-x1,y2-y1],'mask_rle':rle(mask),'source_size':[shape[1],shape[0]],'scope':'mask','method':'birefnet','review_required':True,'review_status':'draft','subject_role':True,'subject_pipeline':PIPELINE,'birefnet_revision':REVISION,'focused_pass':candidate.get('focused_pass',False)}
+      for key in ('verification_pass','component_naming_pass','instance_separation','separation_error','separation_conflict_pixels','name_confidence','name_min_confidence','name_accepted','proposed_concept'):
+       if key in candidate:geometry[key]=candidate[key]
+      if candidate.get('instance_separation')=='sam':geometry['method']='birefnet+sam'
+      if match:
+       row,old,_=match;used.add(row['oid'])
+       # Keep source label, detector identity and canonical box; crop into that box.
+       box=list(map(int,old['bbox']));a,b,d,e=box;crop=candidate['mask'][b:e,a:d]
+       geometry={**old,**geometry,'bbox':old['bbox'],'mask_size':[d-a,e-b],'mask_rle':rle(crop),'source_provider':row['provider'],'source_model':row['model']}
+       encoded=json.dumps(geometry,sort_keys=True,separators=(',',':'))
+       updated=c.execute("UPDATE observations SET kind='mask',geometry=?,updated=unixepoch() WHERE rowid=? AND kind=? AND geometry IS ?",(encoded,row['oid'],row['kind'],row['geometry']))
+       if updated.rowcount!=1:raise RuntimeError('Annotation changed during subject inheritance')
+       attached+=1;changed=True
+      else:
+       encoded=json.dumps(geometry,sort_keys=True,separators=(',',':'))
+       inserted=c.execute("INSERT OR IGNORE INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,?,?,?,?,'mask',?,unixepoch())",(str(p),candidate['concept'],max(.01,candidate['confidence']),'subject-intelligence',PIPELINE,encoded))
+       created+=inserted.rowcount;changed=changed or bool(inserted.rowcount)
+       if inserted.rowcount:used.add(inserted.lastrowid)
+     persisted=[dict(row) for row in c.execute("SELECT rowid AS oid,concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind='mask' AND confidence>0",(str(p),)).fetchall()]
+     for duplicate in duplicate_subject_rows(persisted,shape,used):
+      row=duplicate['row']
+      if duplicate['protected']:
+       geometry={key:value for key,value in duplicate['geometry'].items() if key!='subject_pipeline'};geometry['subject_role']=False
+       c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',(json.dumps(geometry,sort_keys=True,separators=(',',':')),row['oid'],row['geometry']))
+      else:
+       retired+=c.execute('DELETE FROM observations WHERE rowid=? AND geometry IS ?',(row['oid'],row['geometry'])).rowcount
+      changed=True
+    if changed:bump_obs_revision()
+   except JobCancelled:raise
+   except Exception as exc:failed.append({'path':str(p),'error':str(exc)})
+   if progress:progress(index+1,len(payload['paths']))
+ return {'analyzed':len(payload['paths']),'masks_created':created,'masks_inherited':inherited,'boxes_enriched':attached,'non_subject_drafts_retired':retired,'failed':failed,'review_required':True}
+
+@app.post('/api/subjects/separate')
+def subject_separate(req:SubjectRequest):
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject separation requires Full')
+ if not req.paths or len(req.paths)>1000:raise HTTPException(400,'Choose between 1 and 1000 images')
+ if len(req.classes)>200 or any(len(x)>100 for x in req.classes):raise HTTPException(400,'Subject vocabulary is too large')
+ return start_job('subject-separation',subject_paths,{'paths':list(dict.fromkeys(req.paths)),'classes':req.classes})
+
+class SubjectQwenRequest(BaseModel):
+ paths:list[str]
+ environment_id:str|None=None
+ model:str|None=None
+
+def subject_qwen_paths(payload,progress=None):
+ from .subject_queries import ComfyQuery,montage,workflow,parse_reply
+ env=_find_comfy_env(payload.get('environment_id'));cfg=_load_config();translator=cfg.get('prompt_translator',{}) or {}
+ model=payload.get('model') or translator.get('model')
+ if not model:raise RuntimeError('Choose an image-capable Qwen model in Prompt Translator settings first')
+ client=ComfyQuery(env['api_url']);client.validate(model)
+ targets=[];class_hints=[]
+ with db() as c:
+  if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='subject_classes'").fetchone():class_hints=[row[0] for row in c.execute('SELECT label FROM subject_classes ORDER BY created DESC LIMIT 64')]
+  for raw in payload['paths']:
+   for row in c.execute("SELECT rowid AS oid,path,concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind='mask' AND confidence>0",(str(norm(raw)),)).fetchall():
+    if payload.get('unidentified_only') and row['concept'].casefold()!='unidentified subject':continue
+    try:geometry=json.loads(row['geometry'])
+    except (TypeError,ValueError):continue
+    if geometry.get('subject_role') is False:continue
+    if geometry.get('subject_role') or geometry.get('subject_pipeline') or row['provider']=='subject-intelligence':targets.append((dict(row),geometry))
+ if not targets:raise RuntimeError('No subject masks selected. Separate subjects first.')
+ if len(targets)>200:raise RuntimeError('Choose a smaller batch: at most 200 subject queries per job')
+ replies=[];failed=[]
+ for index,(row,geometry) in enumerate(targets):
+  if progress:progress(index,len(targets),phase='Preparing subject query')
+  prompt_id=None
+  try:
+   source=norm(row['path']);before=source.stat();signature=(before.st_size,before.st_mtime_ns)
+   image=client.upload(montage(source,geometry));graph=workflow(model,image,str(translator.get('type') or 'stable_diffusion'),str(translator.get('device') or 'default'),class_hints=class_hints)
+   prompt_id=client.submit(graph)
+   text=client.wait(prompt_id,progress=(lambda:progress(index,len(targets),phase='Waiting for Comfy subject query')) if progress else None)
+   interpretation=parse_reply(text)
+   if progress:progress(index,len(targets),phase='Saving subject review')
+   after=source.stat()
+   if (after.st_size,after.st_mtime_ns)!=signature:raise RuntimeError('Source changed during query; result was not attached')
+   review={**interpretation,'raw_text':text[:16000],'environment_id':env['id'],'model':model,'prompt_id':prompt_id,'updated':time.time(),'status':'draft'}
+   updated_geometry={**geometry,'qwen_review':review}
+   with db() as c:
+    updated=c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND path=? AND geometry IS ?',(json.dumps(updated_geometry,sort_keys=True,separators=(',',':')),row['oid'],row['path'],row['geometry']))
+    if updated.rowcount!=1:raise RuntimeError('Subject changed during query; result was not attached')
+   bump_obs_revision();replies.append({'path':row['path'],'subject':row['concept'],'review':review})
+  except JobCancelled:
+   if prompt_id:
+    # Remove only our own pending prompt. Never interrupt unrelated Comfy work.
+    try:client.post('/queue',{'delete':[prompt_id]})
+    except Exception:pass
+   raise
+  except Exception as exc:failed.append({'path':row['path'],'subject':row['concept'],'prompt_id':prompt_id,'error':str(exc)})
+  if progress:progress(index+1,len(targets),phase='Subject query complete')
+ return {'subjects_reviewed':len(replies),'reviews':replies,'failed':failed,'review_required':True}
+
+@app.post('/api/subjects/interpret')
+def subject_qwen_queue(req:SubjectQwenRequest):
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject interpretation requires Full')
+ if not req.paths or len(req.paths)>100:raise HTTPException(400,'Choose between 1 and 100 images')
+ return start_job('subject-qwen-review',subject_qwen_paths,{'paths':list(dict.fromkeys(req.paths)),'environment_id':req.environment_id,'model':req.model})
+
+def reconstruction_root():
+ return Path((_load_config().get('subject_reconstruction',{}) or {}).get('root') or ROOT/'cache/subjectifier')
+
+def subject_class_root():return Path(DB_PATH).parent/'subject-classes'
+
+@app.get('/api/subjects/classes/status')
+def subject_class_status():
+ from .subject_class_training import status
+ with db() as c:result=status(c,subject_class_root())
+ with SUBJECT_CLASS_QUEUE_LOCK:
+  with LOCK:busy=next((dict(job) for job in JOBS.values() if job.get('kind')=='subject-class-training' and job.get('state') in ('queued','running')),None)
+  queue_pending=SUBJECT_CLASS_PENDING.is_set()
+ return {**result,**subject_class_settings(),'training':{'state':busy['state'] if busy else ('queued' if queue_pending else 'idle'),'job_id':busy and busy['id'],'queued_update':queue_pending}}
+
+@app.get('/api/subjects/classes/settings')
+def subject_class_settings():return {'auto_train':bool((_load_config().get('subject_class_training') or {}).get('auto_train',True))}
+
+class SubjectClassSettings(BaseModel):
+ auto_train:bool
+
+@app.put('/api/subjects/classes/settings')
+def set_subject_class_settings(req:SubjectClassSettings):
+ cfg=_load_config();cfg.setdefault('subject_class_training',{})['auto_train']=req.auto_train;_save_config(cfg);return subject_class_settings()
+
+def subject_class_train_job(payload,progress=None):
+ from .subject_class_training import train
+ return train(db,subject_class_root(),reconstruction_root(),progress)
+
+SUBJECT_CLASS_QUEUE_LOCK=threading.RLock()
+SUBJECT_CLASS_AUTOTRAIN_LOCK=threading.Lock()
+SUBJECT_CLASS_PENDING=threading.Event()
+SUBJECT_CLASS_FORCED=threading.Event()
+
+@app.post('/api/subjects/classes/train')
+def queue_subject_class_training():
+ with SUBJECT_CLASS_QUEUE_LOCK:
+  with LOCK:
+   existing=next((dict(job) for job in JOBS.values() if job.get('kind')=='subject-class-training' and job.get('state') in ('queued','running')),None)
+  if existing:
+   schedule_subject_class_training(force=True)
+   return {**existing,'reused':True,'queued_update':True}
+  job=start_job('subject-class-training',subject_class_train_job,{})
+  return {**job,'reused':False,'queued_update':False}
+
+def schedule_subject_class_training(force=False):
+ # One waiting pass absorbs repeated clicks and manual teaching commits.
+ with SUBJECT_CLASS_QUEUE_LOCK:
+  SUBJECT_CLASS_PENDING.set()
+  if force:SUBJECT_CLASS_FORCED.set()
+  if not SUBJECT_CLASS_AUTOTRAIN_LOCK.acquire(blocking=False):return
+ def schedule():
+  try:
+   time.sleep(1)
+   while True:
+    with LOCK:busy=any(job.get('kind')=='subject-class-training' and job.get('state') in ('queued','running') for job in JOBS.values())
+    if not busy:break
+    if STOP_REQUESTED:return
+    time.sleep(.25)
+   with SUBJECT_CLASS_QUEUE_LOCK:
+    forced=SUBJECT_CLASS_FORCED.is_set();SUBJECT_CLASS_PENDING.clear();SUBJECT_CLASS_FORCED.clear()
+    if STOP_REQUESTED or (not forced and not subject_class_settings()['auto_train']):return
+    if not forced:
+     result=subject_class_status()
+     if not result['ready']:return
+     from .subject_class_training import dataset,manifest_hash
+     with db() as c:rows,_=dataset(c,subject_class_root())
+     fingerprint=manifest_hash(rows)
+     if result['runs'] and result['runs'][0]['manifest_hash']==fingerprint:return
+    queue_subject_class_training()
+  except Exception as exc:LOG.warning('Composite class training not queued: %s',exc)
+  finally:
+   with SUBJECT_CLASS_QUEUE_LOCK:
+    SUBJECT_CLASS_AUTOTRAIN_LOCK.release()
+    if STOP_REQUESTED:SUBJECT_CLASS_PENDING.clear();SUBJECT_CLASS_FORCED.clear()
+    elif SUBJECT_CLASS_PENDING.is_set():schedule_subject_class_training(force=SUBJECT_CLASS_FORCED.is_set())
+ threading.Thread(target=schedule,daemon=True,name='subject-class-teaching').start()
+
+@app.post('/api/subjects/classes/rollback')
+def rollback_subject_classes():
+ from .subject_class_training import rollback
+ try:return rollback(subject_class_root())
+ except ValueError as exc:raise HTTPException(409,str(exc))
+
+class ConfirmSubjectClassRequest(SubjectObservationRef):
+ source:str='language_model'
+
+@app.post('/api/subjects/classes/confirm')
+def confirm_subject_class(req:ConfirmSubjectClassRequest):
+ from .subject_learning import geometry,is_subject,mark_manual
+ if req.source not in ('language_model','trained'):raise HTTPException(400,'Choose a language-model or learned-class proposal')
+ with db() as c:
+  row=subject_observation(c,req);g=geometry(row['geometry'])
+  if row['kind']!='mask' or not is_subject(row):raise HTTPException(400,'Choose a masked Subject')
+  proposal=g.get('qwen_review' if req.source=='language_model' else 'trained_class_review') or {}
+  label=proposal.get('label','').strip()
+  if not label or label.casefold() in ('unknown','unidentified','unidentified subject') or (req.source=='trained' and not proposal.get('accepted')):raise HTTPException(400,'No supported class proposal to confirm')
+  changed=mark_manual(g,'label_confirmed',label,row['concept']);changed['confirmed_class_source']={'source':req.source,'model':proposal.get('model') or proposal.get('revision')}
+  c.execute('UPDATE observations SET confidence=-ABS(confidence),updated=unixepoch() WHERE rowid=?',(row['oid'],))
+  c.execute("INSERT OR REPLACE INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,?,1,'human-correction',?,'mask',?,unixepoch())",(row['path'],label,'subject-class-confirm:'+row['provider']+':'+row['model'],json.dumps(changed,sort_keys=True,separators=(',',':'))))
+ bump_obs_revision();return {'ok':True,'label':label,'geometry':changed,'learn_required':True}
+
+class RecognizeSubjectClassesRequest(BaseModel):
+ paths:list[str]
+
+def recognize_subject_classes(payload,progress=None):
+ import tempfile
+ from .subject_class_training import active,run_worker,sha
+ from .composite_images import isolate
+ from .subject_learning import geometry,is_subject
+ trained=active(subject_class_root())
+ if not trained:raise ValueError('No validated subject classes yet; confirm lessons and train first')
+ targets=[]
+ with db() as c:
+  for raw in payload['paths']:
+   for row in c.execute("SELECT rowid AS oid,* FROM observations WHERE path=? AND kind='mask' AND confidence>0",(str(norm(raw)),)):
+    row=dict(row)
+    if is_subject(row):targets.append(row)
+ if not targets or len(targets)>200:raise ValueError('Choose between 1 and 200 masked subjects')
+ with tempfile.TemporaryDirectory(prefix='recognize-',dir=subject_class_root()) as raw:
+  folder=Path(raw);images=[];signatures=[]
+  for index,row in enumerate(targets):
+   path=Path(row['path']);before=path.stat();data=isolate(path,geometry(row['geometry']));after=path.stat()
+   if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise ValueError('Source changed while preparing recognition')
+   signatures.append((after.st_size,after.st_mtime_ns));image=folder/(str(index)+'.png');image.write_bytes(data);images.append({'image':str(image),'crop_sha256':sha(image)})
+  result=run_worker(subject_class_root(),reconstruction_root(),{'mode':'predict','images':images,'checkpoint':trained['checkpoint']},progress)
+ reviewed=0
+ with db() as c:
+  if active(subject_class_root())['revision']!=trained['revision']:raise ValueError('Active class model changed; run recognition again')
+  for row,signature,prediction in zip(targets,signatures,result['predictions']):
+   st=Path(row['path']).stat()
+   if (st.st_size,st.st_mtime_ns)!=signature:raise ValueError('Source changed; learned review was not applied')
+   g=geometry(row['geometry']);g['trained_class_review']={**prediction,'revision':trained['revision']}
+   update=c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',(json.dumps(g,sort_keys=True,separators=(',',':')),row['oid'],row['geometry']))
+   if update.rowcount!=1:raise ValueError('Subject changed; learned review was not applied')
+   reviewed+=1
+ if reviewed:bump_obs_revision()
+ return {'reviewed':reviewed,'revision':trained['revision'],'predictions':result['predictions'],'review_required':True}
+
+@app.post('/api/subjects/classes/recognize')
+def queue_recognize_subject_classes(req:RecognizeSubjectClassesRequest):
+ if not req.paths or len(req.paths)>100:raise HTTPException(400,'Select between 1 and 100 images')
+ return start_job('subject-class-recognition',recognize_subject_classes,{'paths':list(dict.fromkeys(req.paths))})
+
+@app.get('/api/subjects/reconstruction/status')
+def reconstruction_status():
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject reconstruction requires Full')
+ from .subject_reconstruction import backend_status
+ return {'backends':backend_status(reconstruction_root())}
+
+class SubjectReconstructionSettings(BaseModel):
+ auto_language_model:bool=False
+
+@app.get('/api/subjects/reconstruction/settings')
+def reconstruction_settings():
+ return {'auto_language_model':bool((_load_config().get('subject_reconstruction',{}) or {}).get('auto_language_model',False))}
+
+@app.put('/api/subjects/reconstruction/settings')
+def save_reconstruction_settings(req:SubjectReconstructionSettings):
+ cfg=_load_config();cfg.setdefault('subject_reconstruction',{})['auto_language_model']=req.auto_language_model;_save_config(cfg)
+ return reconstruction_settings()
+
+class SubjectReconstructionRequest(BaseModel):
+ paths:list[str]
+ engine:str='partglee'
+
+def reconstruct_subject_paths(payload,progress=None):
+ from .subject_reconstruction import infer,persist
+ paths=[str(norm(path)) for path in payload['paths']];snapshots={}
+ with db() as c:
+  for path in paths:snapshots[path]=[dict(row) for row in c.execute('SELECT rowid AS oid,* FROM observations WHERE path=?',(path,))]
+ from .subjects import INFERENCE_LOCK
+ while not INFERENCE_LOCK.acquire(timeout=.25):
+  if progress:progress(0,len(paths),phase='Waiting for subject model')
+ try:
+  if payload['engine']=='langhops':
+   try:
+    from .subject_reconstruction import release_idle_comfy
+    release_idle_comfy(_find_comfy_env(None)['api_url'])
+   except Exception:pass
+  result=infer(reconstruction_root(),payload['engine'],paths,progress)
+ finally:INFERENCE_LOCK.release()
+ completed=[]
+ for index,image in enumerate(result['images']):
+  path=image['path']
+  if progress:progress(index,len(paths),phase='Saving reconstructed subject drafts')
+  signature=norm(path).stat()
+  if [signature.st_size,signature.st_mtime_ns]!=image['source_signature']:raise RuntimeError('Source changed during reconstruction')
+  with db() as c:
+   current=[dict(row) for row in c.execute('SELECT rowid AS oid,* FROM observations WHERE path=?',(path,))]
+   if current!=snapshots[path]:raise RuntimeError('Annotations changed during reconstruction; refresh and rerun')
+   # Retire only this backend's old ordinary automatic part drafts. Manual
+   # corrections and their frozen training snapshots remain intact.
+   provider='subjectifier-'+payload['engine']+'-parts'
+   for row in current:
+    if row['provider']==provider and row['confidence']>0:
+     g=json.loads(row['geometry'] or '{}')
+     if g.get('review_status')!='approved':c.execute('DELETE FROM observations WHERE rowid=?',(row['oid'],))
+   saved=persist(c,image,current)
+  bump_obs_revision();completed.append({'path':path,**saved})
+  if progress:progress(index+1,len(paths),phase='Subject drafts saved')
+ result={'images':completed,'backend':payload['engine'],'review_required':True,'weights_updated':False}
+ if reconstruction_settings()['auto_language_model']:
+  with db() as c:
+   unidentified=[path for path in paths if c.execute("SELECT 1 FROM observations WHERE path=? AND concept='unidentified subject' AND kind='mask' AND confidence>0",(path,)).fetchone()]
+  if unidentified:
+   try:result['language_review']=subject_qwen_paths({'paths':unidentified,'unidentified_only':True},progress)
+   except JobCancelled:raise
+   except Exception as exc:result['language_review_error']=str(exc)
+ return result
+
+@app.post('/api/subjects/reconstruct')
+def queue_subject_reconstruction(req:SubjectReconstructionRequest):
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject reconstruction requires Full')
+ if req.engine not in ('partglee','langhops'):raise HTTPException(400,'Unknown reconstruction backend')
+ if not req.paths or len(req.paths)>25:raise HTTPException(400,'Choose between 1 and 25 images')
+ return start_job('subject-reconstruction',reconstruct_subject_paths,{'paths':list(dict.fromkeys(req.paths)),'engine':req.engine})
+
 class JobCancelled(Exception): pass
 
 def job_progress(jid,done,total,**meta):
@@ -3040,6 +3597,7 @@ def job_progress(jid,done,total,**meta):
   job.update(done=done,total=total,updated=now)
   if meta: job.update(meta)
 def start_job(kind,fn,*args):
+ if not EDITION['inference']:raise HTTPException(403,'Lite does not start inference/processing jobs')
  if STOP_REQUESTED: raise HTTPException(503,'N8Vision is shutting down')
  # Sanity is one logical producer job. Repeated UI/directory requests while it owns the
  # floor return the existing job instead of creating overlapping or queued copies.
@@ -3069,7 +3627,11 @@ def start_job(kind,fn,*args):
     else:JOBS[jid].update(state='done',phase='dispatched',result=res,done=JOBS[jid]['total'],updated=time.time())
     LOG.info('Job %s dispatched: %s',jid,kind)
    else:
-    JOBS[jid].update(state='done',result=res,done=JOBS[jid]['total'],updated=time.time());LOG.info('Job %s complete: %s',jid,kind)
+    JOBS[jid].update(state='done',result=res,done=JOBS[jid]['total'],updated=time.time())
+    if kind=='subject-class-training':
+     outcome='Class model activated' if res.get('activated') else 'Candidate rejected by validation; active model retained'
+     JOBS[jid]['phase']=outcome;LOG.info('Job %s: %s (validation %.1f%%)',jid,outcome,100*float(res.get('validation',{}).get('accuracy',0)))
+    else:LOG.info('Job %s complete: %s',jid,kind)
    _write_active_job_journal()
   except JobCancelled as e:
    JOBS[jid].update(state='stopped',error=str(e),updated=time.time()); _write_active_job_journal(); LOG.info('Job %s stopped: %s',jid,kind)

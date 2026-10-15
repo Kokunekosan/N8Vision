@@ -1,73 +1,112 @@
-# N8Vision
+# N8Vision — Alpha
 
 <img src="static/N8_256.png" width="128" height="128" alt="N8Vision icon">
 
-A free, open-source visual image library with automatic image inspections,
-an infinite-scroll browser, file management, and ComfyUI integration.
+A free, open-source image library for browsing generated images, pruning files,
+inspecting metadata and preparing selected subjects for editing.
 
-Current source snapshot: **I.2t-l**. This is an early release; bug reports welcome.
+**Official alpha: I.2t-l-Z1a.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1a).
+No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
 
-## Download and run
+## Install and launch
 
-Download the complete application ZIP from this project's **Releases** page.
-Extract it to a new folder on your Windows computer.
+Windows prerequisites: Python **3.14** with the `py` launcher. Blurred/Full also
+need Git for their pinned image-quality dependency.
 
-Prerequisites: Python 3.14 with the Windows `py` launcher, Git available on your
-command path, internet access for installation, and enough storage for Python
-dependencies and downloaded models. The installer uses an NVIDIA CUDA build
-when a usable NVIDIA GPU is detected, otherwise it selects a CPU build.
+1. Extract the complete ZIP into an empty application folder.
+2. Run **install.cmd** and choose the capacity you need.
+3. Run **N8Vision.cmd**, or an explicit Lite/Blurred/Full launcher.
 
-1. Run `install.cmd` and let it finish downloading dependencies and weights.
-2. Run `N8Vision.cmd` to start the application.
-3. Choose a folder containing images and use **Scan** to make it an archive root.
+All profiles share one installed `.venv`. Add capacity later by running
+install.cmd again in that same folder. Launching Lite from a Full installation
+keeps the heavier functions disabled. Downloads occur during installation or
+when an optional feature is prepared; source packages contain no model weights.
+The browser opens after the server becomes ready.
 
-Runtime data, settings, caches and model weights are created on your own machine;
-they are not included in the source download. For an existing installation,
-preserve those directories when replacing application source, then restart and
-refresh the browser.
+| Profile | Tools |
+| --- | --- |
+| Lite | Archive maintenance, thumbnails, browsing, selection, filesystem actions, stored filters and manual annotations. |
+| Blurred | Lite plus detectors, quality inspection, embeddings, similarity/uniqueness, SAM and existing ComfyUI/refinement/training tools. |
+| Full | Blurred plus selected-image subject assembly, preferred-language-model inspection and learned composite classes. |
 
-## Report something broken
+## Updating an existing installation
 
-Open this project's **Issues** tab and choose **New issue → Bug report**.
-Include your version, Windows/Python details, what you did, what you expected,
-what happened, and relevant logs or screenshots. Remove credentials from logs.
+Stop N8Vision, back up your existing installation, and replace application source
+files from the complete ZIP. Preserve your `.venv`, `data`, `cache`, models,
+training projects and settings. Restart using the desired profile and refresh
+all browsers. The download contains no personal archive or machine configuration.
+Do not initialize or run a GitHub publishing checkout; use a separate live copy.
 
-## What is included
+## Browsing and mobile
 
-- Incremental discovery of newly added images.
-- Automatic Sanity and BRISQUE inspections, including unscanned archive backfill.
-- Infinite-scroll image browsing and a selectable absolute inspector filepath.
-- Same-root moves that preserve scroll positions and cross-root hand-truck markers.
-- Sequential file moves with metadata preservation and completed-move journaling.
-- ComfyUI bridge and image/refinement tools.
+- Directory-change discovery and automatic archive inspections retain the browsing position.
+- Equivalent feature names merge into badges and filters while detector attribution stays available in the inspector.
+- Settings provides an explicit preview/cleanup of observations from missing local detectors. Reviewed/owned observations require an additional opt-in for removal.
+- Phones/tablets load a bounded image window and remember desired column counts separately by orientation. Search, sorting and Shown actions operate on that loaded window.
+- Mobile Menu and Filters switch cards. **Clear Selected** is directly below the hamburger.
+- Inspector and mask studio support **+/− zoom**, **Fit**, **WASD** panning and a touch stick. Framing moves image/mask/box layers together.
 
-## Latest update
+## Subject tools: selected images, on demand
 
-- Settings toggle hides all image-grid badges and annotation overlays.
-- Faster inspector: pauses thumbnail preparation, prioritizes source loading,
-  reuses loaded images, and avoids full viewer rebuilds when saving boxes.
-- Stable proportional mask-canvas fit and incremental mask painting.
-- New boxes automatically selected for Paint Mask or SAM Mask.
-- Similarity/uniqueness score sorting and scoped vector queries repaired.
-- Return to Origin homes the current grid without a new archive scan.
-- Existing icons, incremental discovery, automatic Sanity/BRISQUE and move
-  behavior retained. No databases, caches, model weights or local settings.
+These are specialist tools for images you plan to work on. Select the intended
+images before assembly or language-model inspection; they are not whole-library
+background jobs. Fast YOLO-based inspection remains available separately.
 
-## Release policy
+Full includes BiRefNet-based separation. For the optional **PartGLEE** or
+**LangHOPS** object/part backends, run **Install-SubjectParts.cmd**, choose a
+backend, and use **Assemble selected subjects**. These reconstruction backends
+currently require NVIDIA CUDA. PartGLEE weights are about 0.8GB plus shared
+resources; the LangHOPS checkpoint is about 16GB plus shared resources.
 
-This repository holds approved source snapshots. The maintainer tests changes
-in a separate live installation. Only a source snapshot that has been reviewed
-and proven there is copied into this repository for publication.
+For language-model interrogation, select an image-capable model in Prompt
+Translator settings and connect the existing ComfyUI environment. Inspection
+sends the assembled subject pixels on gray; draft names/features appear in the
+inspector. The preferred LM is configurable. LangHOPS's internal PaliGemma model
+is a separate parser dependency and requires the user's own approved Hugging
+Face access. Never put access tokens in issue reports or source files.
 
-The maintainer does not run the application in this publishing copy. Nothing
-automatically copies machine state or unapproved changes from the live folder.
+Parts and ownership begin as drafts. Explicitly choose owners for manual masks.
+Use **Use language-model class** (or correct the Subject label), then **Learn
+Subject**, to save a confirmed composite lesson.
 
-The I.2t-f audit passed dependency, syntax, scanner, startup-inspection, move and
-HTTP smoke checks in the tested environment. Fresh installations, live GPU/Comfy
-workflows, portal/mobile UI, and other operating systems still need broader
-testing. See [RELEASE-AUDIT.txt](RELEASE-AUDIT.txt) for the scope of those checks.
+## Composite class training
 
-## License
+A shared visual recognizer learns new classes from confirmed masked composites.
+It trains a supervised class head on frozen pretrained visual features; it does
+not fine-tune your preferred LM or the anatomy/ownership parser. Ownership and
+mask corrections remain valuable teaching records for future parser work.
 
-N8Vision source is available under the [MIT License](LICENSE). Third-party
-dependencies and downloaded model weights retain their own licenses.
+At least **two classes**, each with **three different source images**, are needed
+for an initial run. This minimum creates a source-separated training/validation
+split; it is not an accuracy guarantee. Build varied examples and review masks.
+Automatic inference never teaches itself. Training after manual Learn commits
+can be switched off. Extra requests during training coalesce into one follow-up.
+
+The training-button light and text distinguish queued, running, activated,
+validation-rejected and failed states. A completed training job may still fail
+validation: the prior active model then remains in use. Per-class held-out
+results explain the rejection. Learned recognition stays a draft until confirmed.
+A previous validated model can be restored. See the verification reports for
+exact acceptance checks and current limits.
+
+## Alpha status and testing
+
+Source/API checks, controlled real encoder/class-training tests, archive checks
+and simulated mobile/framing control tests passed. The developer has exercised
+mobile browsing, remote inspection and subject identification in live use.
+Recent mobile drawer and zoom controls still need broader device testing.
+A clean Internet installation and every GPU/Comfy combination have not been
+end-to-end tested. Report edition/version, device and reproduction steps with
+bugs; remove tokens, personal paths and private image content from shared logs.
+
+Feature work is frozen through **Friday, October 16, 2026**; changes during this
+period are limited to polishing, fixes, compatibility and documentation.
+
+## License and model terms
+
+N8Vision source is [MIT licensed](LICENSE): free to use, modify and redistribute.
+Dependencies and downloaded models retain their own terms. In particular,
+[LangHOPS](https://github.com/y9miao/LangHOPS-release) is an optional
+**CC BY-NC-SA 4.0** research backend; N8Vision's MIT license does not relicense it.
+[PartGLEE](https://github.com/ProvenceStar/PartGLEE) and gated PaliGemma resources
+are downloaded separately. Review their upstream terms for your intended use.

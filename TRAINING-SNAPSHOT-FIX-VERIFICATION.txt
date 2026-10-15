@@ -1,0 +1,45 @@
+T2a: training snapshot additions and visible validation outcome
+Apply over T2: stop Vision, extract patch, restart Full, refresh browser.
+No new dependencies, model downloads or lesson/archive migrations.
+
+Confirmed user failure: one training run overlapped a new manual Learn commit.
+T2 compared the entire teaching set before/after; an appended lesson canceled
+activation although the candidate's original inputs were unchanged.
+T2a fingerprints semantic targets independent of row ordering/local crop path,
+and rechecks the actual lessons used by the candidate. Extra lessons may arrive
+while it trains, and remain queued for subsequent training. Unchanged pixel/label
+reconfirmations replacing a revision are accepted. A used lesson relabeled,
+replaced with different pixels, removed, or made unverifiable still prevents
+activation; previous active model remains. Contradictory-pixel checks retained.
+Existing automatic scheduler coalesces commits and schedules updated lessons.
+
+Later reported completed jobs had actually trained but failed validation, with
+2/3 accepted held-out classes. They did not replace the prior two-class model.
+Validation gates are unchanged. Job console/card now says Class model activated
+or Candidate rejected by validation; active model retained. Training panel shows
+last run outcome, accepted validation percentage, per-class results and errors.
+New candidate reports include held-out expected labels, predicted labels, scores,
+support similarity and accepted/abstained status to diagnose rejected classes.
+No automatic spelling correction or editing of the user's confirmed labels.
+
+Training button light: gray idle, blue queued, amber running, green activated,
+orange validation rejection, red failed. Text names the state; color is optional.
+Clicking while running requests ONE follow-up pass. Repeated concurrent clicks
+coalesce into that pass, and the button disables once queued. Manual requests
+work with automatic training disabled. Queue is local to the current app session;
+confirmed lessons survive restart. Pending/run state stays visible while polling.
+Eight concurrent requests verified exactly one active + one follow-up job, with
+no duplicate passes; light/queued/complete/rejected UI states verified.
+
+Verified: temporary real SQLite training transaction accepts appended lessons,
+row ordering/cache-path changes and identical reconfirmation; changed used
+labels/pixels/removal reject and preserve active model. Pending unused classes
+can change without invalidating the trained subset. Activation field saved in
+run report. Frontend VM confirms rejection and failed class visibly displayed.
+Actual pretrained encoder/gradient training/recognition/replay/rollback test
+passed again on controlled two-class/six-composite fixtures (held-out2/2), with
+new held-out diagnostics. This tests mechanics, not user-character accuracy.
+Frozen lesson/dataset safety regressions passed. Final Python/frontend syntax,
+ZIP CRC/hashes and exact T2 incremental reconstruction verified.
+Live archive/reports inspected read-only; no live source, lessons, weights, labels
+or GitHub files changed. No user images/checkpoints/archive state in artifacts.

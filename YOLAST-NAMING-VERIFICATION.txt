@@ -1,0 +1,34 @@
+S4 YOLAST subject naming gate
+
+Apply over S3. Stop Vision, extract, restart Full and refresh. No dependency
+installation. Rerun the selected test spread to apply the naming gate to old
+automatic subject drafts. No whole-library reanalysis or live/GitHub changes.
+
+Automatic subject names need confidence >=0.65. Weak proposals still localize
+subjects and receive/reuse masks, but display Subject — Unidentified. Best rejected
+noun/score and the acceptance threshold are saved as diagnostic geometry metadata.
+First-stage localization and independent composite component discovery remain at
+their lower thresholds; the final naming gate covers every automatic path.
+Below-65 proposals receive the existing bounded focused attempt, including archive
+seeds; no repeated inference loop until a noun happens to pass. Same-family noun
+improvement is retained to avoid relabeling a target into an unrelated component.
+
+User/manual labels and approved masks are trusted and preserved. Old low-score
+automatic subject-provider drafts become unidentified on rerun, keeping mask
+pixels; inherited unapproved machine detections below threshold lose their subject
+role while their original detection label/score/pixels remain archived. Accepted
+subject naming score is displayed independently from original detector confidence.
+Approved/manual work is exempt from automatic relabeling.
+
+Verified: explicit 0/.34/.64/.649999/.65/.80 acceptance boundaries; bounded focused
+64->70 improvement; rejected noun retained in diagnostics; localization preserved;
+manual label exemption; old 34% Tiger draft becomes unidentified without changing
+mask pixels and stays stable on repeat; name confidence vs detector confidence UI;
+largest-mask targeting, composite catgirl/horse and rider/motorcycle, mask inheritance
+and cleanup regressions. Full Python compilation/JS parsing and source-only ZIP
+CRC/hash/application reconstruction passed. Your spread/GPU accuracy not rerun.
+
+Confidence is the model's score, not guaranteed correctness. A wrong >=65 noun
+can still pass; this patch intentionally leaves weaker names unidentified so
+training/model alternatives can be investigated without invented certainty.
+The anatomical ownership tree is not part of this patch.
