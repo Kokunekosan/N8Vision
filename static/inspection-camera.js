@@ -54,7 +54,7 @@
    let x=(this.keys.has('d')?1:0)-(this.keys.has('a')?1:0)+this.stick[0],y=(this.keys.has('s')?1:0)-(this.keys.has('w')?1:0)+this.stick[1];
    if(!x&&!y){this.lastTime=0;return}
    const length=Math.hypot(x,y);if(length>1){x/=length;y/=length}const elapsed=this.lastTime?Math.min(.05,(time-this.lastTime)/1000):1/60;this.lastTime=time;
-   if(this.canPan()&&!editable(document.activeElement)&&!document.querySelector('dialog[open]'))this.pan(x*360*elapsed,y*360*elapsed);
+   if(this.canPan()&&!editable(document.activeElement)&&!document.querySelector('dialog[open]'))this.pan(-x*360*elapsed,-y*360*elapsed);
    this.frame=requestAnimationFrame(next=>this.tick(next));
   }
   stopInput(){this.keys.clear();this.stick=[0,0];this.pointerId=undefined;this.knob.style.transform='translate(0px,0px)';if(this.frame)cancelAnimationFrame(this.frame);this.frame=0;this.lastTime=0}

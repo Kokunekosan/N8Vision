@@ -1,0 +1,20 @@
+Z1g: independent subject extraction, bounded optional YOLAST naming.
+Separate selected subjects now runs BiRefNet only: unnamed connected foreground
+regions, with no YOLO, SAM, language-model naming or learned recognition invoked.
+Touching subjects may remain merged; use mask editing/reconstruction as needed.
+Existing subject masks and their identities are retained; equivalent regions
+are skipped on re-extraction. No automatic deletion/relabeling in extraction.
+Name selected subjects runs a separate job against unidentified subject masks.
+YOLAST max passes is a hard per-image cap (1-100, default 8), shared across
+regions and retries; broad pass per region precedes family retries. Accepted
+names stop retrying; untested regions remain unidentified. Limit persists when
+queued. Naming preserves masks/boxes and skips existing named/custom subjects.
+Recognize learned classes remains independent, using existing review/confirm
+flow, and needs no YOLO naming. Selected extraction/naming respects Subjectified.
+Console records extraction device/time and naming pass count/time.
+Verified Python/frontend syntax; mocked model tests for no-YOLO extraction,
+multiple components, hard pass cap, early stopping, unchanged mask pixels,
+DB persistence, repeat extraction dedup and custom-identity protection.
+No heavyweight benchmark/retraining or physical browser test performed.
+Apply over Z1f: stop Vision, extract patch, restart and refresh browser.
+Exact ZIP reconstruction, CRC and hashes verified; live/GitHub unchanged.

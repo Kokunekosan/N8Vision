@@ -1,0 +1,24 @@
+Z1j: learned recognition application and visible result feedback.
+Read-only live audit found 116 saved reviews, 84 accepted; results were hidden
+as draft geometry metadata. Active registry had two admitted classes. No live
+database/model modifications were made during diagnosis.
+Recognize learned classes now defaults to applying accepted labels to unknown/
+unidentified subjects only. Existing named/custom subjects remain unchanged;
+their alternative predictions remain drafts. Checkbox allows draft-only mode.
+No automatic Learn Subject or training. Masks/boxes unchanged. Recognition
+validates complete prediction count, source signature, active revision and
+observation snapshot before committing. Console/job/status show reviewed,
+accepted, applied and abstained counts and console reports abstention reasons.
+Inspector detection rows show learned/draft/uncertain markers. Selecting a row
+shows abstention reasons. Completed jobs refresh open inspector observation
+rows in place, preserving source view/camera; mask editing/drawing not disturbed.
+Reviewed drafts can still be explicitly confirmed with Use learned class.
+Verified Python/frontend syntax and SQLite/inference-stub integration for auto
+application, protecting named identities, abstention, draft-only, unchanged mask
+data, no learning flags and incomplete-result rejection. Browser layout and full
+encoder recognition not rerun. No new model/dependency requirements.
+Apply over Z1i: stop Vision, extract patch, restart and refresh browser; run
+Recognize learned classes again on selected extracted subjects. No retraining
+required. Prior saved drafts are not bulk-applied by installing this patch.
+Incremental reconstruction, ZIP CRC/entry bytes and SHA256 verified.
+Live installation and GitHub unchanged.

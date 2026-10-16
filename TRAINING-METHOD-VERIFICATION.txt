@@ -1,0 +1,22 @@
+Z1i: source-group cross-validation and per-class admission.
+3-5 folds evaluate every eligible example once, without sharing source images
+across train/validation. Candidate folds start fresh. Support estimates use
+different-source training exemplars, never self-containing class centroids.
+Class updates require >=80% accepted precision and >=50% accepted recall;
+overall accepted accuracy is descriptive. Existing unpromoted heads remain
+active and take precedence; weak new classes stay pending. Exact labels still
+compete; this is not inferred anatomical hierarchy/multi-label training.
+Recognition stays a draft. Final candidate refit after cross-validation;
+retained-head comparisons are replay checks, not independent validation.
+Only admitted class examples marked trained. Legacy checkpoints readable;
+new schema2 registries need this recognition code. Rollback remains supported.
+Actual PyTorch optimization and SQLite tests: distinct classes admitted while
+ambiguous classes deferred, false-positive precision gate, every-example group
+isolation, retained heads, checkpoint roundtrip, pending lesson states, repeat
+training, rollback, and stale lesson rejection. Python/frontend syntax passed.
+Pretrained encoder/full image pipeline not rerun; collection accuracy unproven.
+See TRAINING-METHOD-REVIEW.md for limits and rationale.
+Apply over Z1h: stop Vision, extract patch, restart and refresh browser.
+Then train again. No samples need re-labeling solely to use this update.
+No dependencies changed; no live archive/model changes or GitHub publication.
+Incremental reconstruction, ZIP CRC/entry bytes and SHA256 verified.

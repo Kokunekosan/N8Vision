@@ -1,0 +1,25 @@
+Z1o: optional desktop chunked browsing with configurable loaded image zone.
+Settings > Library loading > Load desktop library in windows. Off by default;
+zone default4000, min1000/max100000, step1000. Browser-local preferences. Apply
+reopens the current root, attempting to retain the current image position.
+Window fetches 500-image pages, shifts by500 when the midpoint is crossed and
+refills the opposite end on reversal. Old visible rows remain until new visible
+rows are ready. Resident metadata is limited to the configured zone (less at
+short-library boundaries). Off continues whole-catalog browser loading.
+Desktop columns/thumbnail size/controls remain desktop; mobile range behavior
+stays the same. Desktop paging transactions retained for reverse reads without
+enabling mobile image-header sizing. Old transactions explicitly retired.
+Search, filters, sorts, selected-shown population and navigator cover the loaded
+window. Automatic shifts follow Filesystem ascending; other rankings use
+Previous500/Next500 controls to prevent sort-induced paging oscillation. These
+also advance through windows where filters produce no matching images.
+Existing selected off-window paths remain selected, as in mobile browsing.
+Server still prepares the archive snapshot; this bounds browser transfers and
+resident metadata, not server-side catalog preparation or native DOM card count.
+Tests: JS/Python syntax, 1000/2000/4000/10000 windows, midpoint/no-early-fetch,
+one-page500 shift/reverse refill, mobile compatibility, short/end clamp, close
+cancellation, server transaction retirement/isolation without mobile layout.
+Actual browser/large-library scrolling and phone regression not measured.
+Apply over Z1n: stop Vision, extract patch, restart and refresh browser.
+No dependencies/models/training changes. ZIP reconstruction/CRC/hash verified.
+Live installation/archive and GitHub unchanged.

@@ -1,0 +1,12 @@
+Z1v: show completed focal rows without waiting for offscreen buffer.
+Row completion already requests animation-frame paint. Previously paintRing
+refused all mounting until the whole viewport-plus-buffer pool was ready.
+Now admit a contiguous set of completed rows containing the cursor, expanding
+on every readiness notification. Individual rows remain fully hydrated.
+Use actual cursor-to-first-row offset so growing the prefix preserves framing.
+No timer polling added, no archive scan or model/dependency changes.
+Checks: focal-only admission, contiguous growth, missing focal row retains old
+DOM, cyclic origin, empty pool, readiness notification and positioning source
+checks; JavaScript/Python syntax. Browser timing and live scrolling untested.
+Apply over Z1u: stop Vision, extract patch, restart and refresh browser.
+ZIP reconstruction, entry bytes, CRC and SHA256 verified. Live/GitHub unchanged.

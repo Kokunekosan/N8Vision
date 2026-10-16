@@ -1,0 +1,20 @@
+Z1l: first image grid before optional menu assembly.
+Folder DOM was synchronously rebuilt from the growing entire file list before
+rendering each 500-file packet. Repeated rescans/DOM work competed with thumbnails.
+Folder menu requests are now coalesced behind initial grid mounting (or empty/
+completed/failed browse), incrementally enumerate new chunks, yield after 6ms,
+and build nodes in 100-item batches. Root/generation guards discard stale builds.
+Post-browse changes rebuild the index to reflect moved/removed paths.
+Model/tag/health/processing menus start after first grid display. Folder/volume
+root restoration still works without a startup root. Failed/empty browses release
+menus rather than leaving controls gated. Pairing and media auth still precede
+remote thumbnails. Desktop row prep now prioritizes the visible pool over scouts.
+Browse packets yield to a browser frame; directory menus do not own grid updates.
+Tests: frontend/Python syntax, no queued menu work before grid readiness, request
+coalescing/post-ready dispatch, nested folder paths, incremental append, root
+isolation, and init with deferred menu endpoints proving browse starts first.
+Main-library/browser wall-clock startup not measured; no performance claim made.
+No model/training/cache deletion, root rescan, viewport reset or library changes.
+Apply over Z1k: stop Vision, extract patch, restart, refresh browser.
+Exact incremental reconstruction, ZIP CRC/entry bytes and SHA256 verified.
+Live installation/GitHub unchanged.

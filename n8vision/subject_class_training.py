@@ -1,5 +1,5 @@
 """Confirmed composite classes, immutable lessons and atomic trained releases."""
-import hashlib,json,os,subprocess,sys,tempfile,threading,time,uuid
+import hashlib,json,os,subprocess,sys,tempfile,threading,time,uuid,logging
 from pathlib import Path
 from .observation_display import concept_key
 
@@ -134,7 +134,7 @@ def rollback(root):
   if len(previous)!=32 or any(ch not in '0123456789abcdef' for ch in previous):raise ValueError('Invalid previous revision')
   folder=Path(root)/'releases'/previous;report=json.loads((folder/'report.json').read_text())
   if not report.get('passed'):raise ValueError('Previous revision did not pass validation')
-  pointer={'revision':previous,'checkpoint_sha256':sha(folder/'classifier.pt'),'encoder_sha256':report['encoder_sha256'],'classes':report['classes'],'validation':report['validation'],'previous_revision':None}
+  pointer={'revision':previous,'checkpoint_sha256':sha(folder/'classifier.pt'),'encoder_sha256':report['encoder_sha256'],'classes':report.get('active_classes',report['classes']),'validation':report['validation'],'previous_revision':None}
   temporary=Path(root)/'active.tmp';temporary.write_text(json.dumps(pointer,indent=2));os.replace(temporary,Path(root)/'active.json');return pointer
  finally:TRAIN_LOCK.release()
 
@@ -146,17 +146,33 @@ def train(db,root,parser_root,progress=None):
    rows,blocked=dataset(c,root);fingerprint=manifest_hash(rows)
    c.execute('INSERT INTO subject_class_runs(id,state,manifest_hash) VALUES(?,?,?)',(revision,'training',fingerprint))
   previous=active(root)
+  groups={}
+  for row in rows:groups.setdefault(row['class_key'],{'label':row['label'],'sources':set(),'count':0});groups[row['class_key']]['sources'].add(row['source_group']);groups[row['class_key']]['count']+=1
+  summary='; '.join(f'{g["label"]}: {g["count"]} examples / {len(g["sources"])} source images'+(' (deferred: needs 3 sources)' if len(g['sources'])<3 else '') for g in groups.values())
+  logging.getLogger('n8vision').info('Subject training dataset: %s',summary or 'no confirmed examples')
+  if progress:progress(0,len(rows),phase='Training classes: '+summary)
+  from .subject_class_validation import folds
+  try:
+   eligible,_,pending=folds(rows)
+  except ValueError as exc:
+   result={'deferred':True,'activated':False,'revision':revision,'blocked':blocked,'diagnostics':['Training deferred: '+str(exc),'Teaching examples retained; no candidate trained or rejected.','Available classes: '+(summary or 'none')]}
+   with db() as c:c.execute('UPDATE subject_class_runs SET state=?,report=? WHERE id=?',('deferred',json.dumps(result),revision))
+   (release/'report.json').write_text(json.dumps(result,indent=2))
+   return result
   result=run_worker(root,parser_root,{'mode':'train','examples':rows,'checkpoint':str(release/'classifier.pt'),'previous':previous and previous['checkpoint']},progress)
   if progress:progress(len(rows),len(rows),phase='Validating learned classes')
   with db() as c:
    current,_=dataset(c,root)
    result['new_lessons_waiting']=validate_snapshot(rows,current,result.get('trained_examples',[row['id'] for row in rows]))
    result.update(revision=revision,blocked=blocked,manifest_hash=fingerprint)
+   result['had_active_model']=bool(previous)
    result['activated']=bool(result.get('passed'))
+   from .subject_training_report import describe_training
+   result.setdefault('diagnostics',describe_training(result))
    if result.get('passed'):
-    pointer={'revision':revision,'checkpoint_sha256':sha(release/'classifier.pt'),'encoder_sha256':result['encoder_sha256'],'classes':result['classes'],'validation':result['validation'],'previous_revision':previous and previous['revision']}
+    pointer={'revision':revision,'checkpoint_sha256':sha(release/'classifier.pt'),'encoder_sha256':result['encoder_sha256'],'classes':result.get('active_classes',result['classes']),'validation':result['validation'],'previous_revision':previous and previous['revision']}
     temp=root/'active.tmp';temp.write_text(json.dumps(pointer,indent=2));os.replace(temp,root/'active.json')
-    for example_id in result['trained_examples']:c.execute("UPDATE subject_learning_examples SET state='trained_class' WHERE id=?",(example_id,))
+    for example_id in result.get('activated_examples',result['trained_examples']):c.execute("UPDATE subject_learning_examples SET state='trained_class' WHERE id=?",(example_id,))
    c.execute('UPDATE subject_class_runs SET state=?,report=? WHERE id=?',('active' if result.get('passed') else 'rejected',json.dumps(result),revision))
   result['activated']=bool(result.get('passed'))
   (release/'report.json').write_text(json.dumps(result,indent=2));return result

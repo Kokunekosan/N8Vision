@@ -328,3 +328,12 @@ body.mobileArchive .filterDrawerHead{display:flex;align-items:center;justify-con
 body.mobileArchive .filterDrawerHead button{min-height:40px}
 body.mobileArchive #filterDrawer .magnetBoard{flex:1;min-height:120px;height:auto}
 @media(max-width:850px){#clearSelectedBtn{display:block;position:fixed;top:55px;left:7px;z-index:110;min-height:40px;padding:6px 9px;font-size:11px;background:#282828ee}#filterDrawer{position:fixed;inset:0;width:100vw;height:100dvh;max-width:100vw;z-index:201;box-sizing:border-box;display:flex;flex-direction:column;padding-bottom:max(10px,env(safe-area-inset-bottom))}.filterDrawerHead{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none;margin-bottom:8px}.filterDrawerHead button{min-height:40px}#filterDrawer .magnetBoard{flex:1;min-height:120px;height:auto}}
+
+/* Expanded by default; native summary supports keyboard and touch. */
+#rail .menuSection > summary{cursor:pointer;color:#999;user-select:none;list-style-position:outside;margin-left:14px}
+#rail .menuSection > summary > h3{display:inline;margin:0}
+#rail .menuSection[open] > summary{margin-bottom:8px}
+#rail .menuSection + .menuSection{margin-top:10px}
+#rail .menuSection > summary:focus-visible{outline:2px solid #87baff;outline-offset:3px}
+
+#grid .card{user-select:none;-webkit-user-select:none}

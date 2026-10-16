@@ -1,0 +1,25 @@
+Z1r: remove library work from click/action paths.
+Selection previously called visibleFiles twice, building observation groups
+for every image even without active filters. Selection/Shift range now uses
+the rendered catalog; selection counts do not reevaluate library filters.
+No-filter matching returns before observation inspection; Subjectified-only
+matching avoids unrelated detector grouping. Click/inspection abort background
+metadata refresh. Multi-Work selection uses the same existing visible list.
+Background observation refresh is50 images/request, yields between batches and
+ready-row badge updates, and only certifies a fully refreshed revision. Later
+revisions cannot falsely certify earlier batches. No viewport/ring rebuild.
+Tombstone card patching uses a path map rather than repeated whole-library find.
+Delete immediately shows Deleting overlay, paints before the request, keeps
+scroll controls free, prevents duplicate pending requests, and only tombstones
+confirmed successes. Failed/unknown outcomes clear pending feedback; no optimistic
+claim that the filesystem deletion completed. Future prefabs also show pending.
+Actual Recycle Bin/archive work may still take time; backend logs both durations.
+Move dialog opens before directory I/O. Confirm stays disabled until current
+folder succeeds; stale directory responses are ignored.
+Verified frontend/Python syntax; click/Shift/no-filter paths with library scans
+set to throw,50/50/21 metadata batching and earliest-revision tracking, immediate
+pending delete then partial-success-only tombstone and pending cleanup. Actual
+browser latency/scroll and OS delete durations not benchmarked.
+Apply over Z1q: stop Vision, extract patch, restart and refresh browser.
+No dependencies/models/training changes. ZIP reconstruction/CRC/hash verified.
+Live installation/archive and GitHub unchanged.

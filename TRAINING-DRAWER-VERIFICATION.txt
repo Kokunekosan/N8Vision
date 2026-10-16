@@ -1,0 +1,15 @@
+Z1n: Subject training diagnostics moved out of the menu.
+Training diagnostics button opens a native modal panel in the foreground on
+desktop/mobile. Full class inventory, run diagnostics, validation/error report,
+refresh status and rollback controls live inside it. Close, Escape/backdrop
+dismiss and focus returns to the opener. Status refreshes on opening and via
+existing job polling. Training lamp and primary training/recognition controls
+remain on the menu. Only classes with <3 source images stay on the menu under
+Still collecting examples, showing label and current/3 count. Reminder list
+updates with status; classes reaching 3 disappear, empty list is hidden.
+No training, inference, threshold, archive or cache behavior changed.
+Verified frontend/Python syntax and simulated DOM open/close/focus, refresh,
+diagnostic control placement, under-three filtering and empty reminder hiding.
+Physical browser/phone rendering not tested. Apply over Z1m: stop Vision,
+extract patch, restart and refresh browser. ZIP reconstruction/CRC/hash verified.
+Live installation/GitHub unchanged.

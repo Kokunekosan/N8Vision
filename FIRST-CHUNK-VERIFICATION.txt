@@ -1,0 +1,16 @@
+Z1p: restore first-chunk display in desktop windowed startup.
+Z1o awaited the entire configured metadata window before applying its first
+snapshot. Desktop now fetches and mounts the first500 image page independently,
+yields a browser frame, then fills the remaining zone. Existing visible rows
+stay mounted while refill waits; current image anchor retained on expansion.
+Mobile startup behavior is unchanged. Window size and500 bounce remain intact.
+The pre-cached image-zone control now lives in the existing Library section;
+that section is first beneath the Settings header, ahead of Appearance. No
+separate Library loading section appended at the bottom.
+Verified JS/Python syntax; first500 returns before any subsequent page request,
+blocked refill retains initial snapshot, eventual4000 completion and source
+placement of Library controls at the Settings top. Browser wallclock and actual
+main-library rendering not tested. No model/dependency/observation changes.
+Apply over Z1o: stop Vision, extract patch, restart and refresh browser.
+Exact incremental reconstruction, ZIP CRC/entry bytes/SHA256 verified.
+Live installation/archive and GitHub unchanged.

@@ -1,0 +1,21 @@
+Z1k: recognition metadata cache repair.
+Read-only live check confirmed current-model results persisted: 13 futa,
+62 futa_cyborg, 29 unidentified abstentions. Model already performed recognition.
+A refreshOne/Inspector request advanced a global observation revision even
+though other images were stale. Generic refresh then skipped those images.
+Single-image refresh no longer certifies catalog-wide freshness. Completed
+recognition jobs fetch affected paths in batches of 100 and synchronize current
+files, cached root objects and mobile path/page metadata. Completion notification
+is marked consumed only after synchronization succeeds. Inspector refreshes its
+own current records on opening, in place; source view/camera remains intact.
+Mobile observation overrides survive page eviction; subsequent manual edits take
+precedence. No scroll-ring rebuild, automatic re-inference or training added.
+Tests: JS/Python syntax, separate current/cached objects, shared-object handling,
+future mobile-page stale data replacement, manual-edit precedence, independent
+single-image/catalog revision. No browser/phone rendering test performed.
+Apply over Z1j: stop Vision, extract patch, restart and refresh browser.
+Existing labels are already stored: no retraining or recognition rerun needed.
+29 abstentions remain unidentified; 21 had pending-class predictions. Those
+require more teaching or different evidence, not a cache fix.
+Exact incremental reconstruction, ZIP CRC/bytes and SHA256 verified.
+Live installation/archive/models and GitHub unchanged.

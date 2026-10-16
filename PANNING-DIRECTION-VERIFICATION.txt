@@ -1,0 +1,8 @@
+Z1b: reversed inspector and mask studio WASD/touch-stick panning.
+Apply over official alpha Z1a: stop Vision, extract patch into package folder,
+restart and refresh browser. Browser asset versions updated to avoid stale code.
+W/up looks upward; D/right looks right (image translates oppositely).
+Verified JavaScript syntax, all four WASD directions and both touch-stick axes.
+Only display pan direction changed; zoom and source/mask coordinates unchanged.
+ZIP CRC, entry hashes and exact incremental reconstruction verified.
+No live installation or GitHub publication changed.

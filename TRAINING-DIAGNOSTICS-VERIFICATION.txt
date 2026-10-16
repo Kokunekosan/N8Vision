@@ -1,0 +1,13 @@
+Z1f (includes Z1e): verbose training diagnostics and pending-data handling.
+Console/panel report class names, source counts, per-class validation, grouped
+confusions/abstentions and exact failed confidence/margin/support/accuracy gates.
+Classes below 3 distinct source images are excluded from training and validation,
+retained for later collection. Insufficient eligible classes or unsafe shared-
+source validation split now defers the run without training/rejecting a candidate.
+Also defers if a previously active class lacks enough current usable sources.
+Actual validation failures remain failures; acceptance thresholds unchanged.
+Verified Python/JS syntax, diagnostic scenarios, split excluding undersampled
+class from both train and validation (two remaining classes, 4 train/2 validation),
+and insufficient-class preflight. No heavy retraining or archive/model changes.
+Apply over Z1d or Z1e: stop Vision, extract patch, restart, refresh browser.
+Exact ZIP reconstruction/CRC/hash verified. Live/GitHub unchanged.

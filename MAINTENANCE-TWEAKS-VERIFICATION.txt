@@ -1,0 +1,21 @@
+Z1s: accumulated library-maintenance tweaks over Z1r.
+Successful moved images release selection and moved range anchor. Failed or
+unrelated selections remain; partial-error completed moves release correctly.
+All actual moves now leave a hand-truck source placeholder, including same-root
+moves. Marker wording is moved to a new location. Destination metadata is
+relinked; source slot stays put. Mobile/windowed original pages retain forwarding
+markers. Rename is explicitly kept in-place without a hand-truck placeholder.
+Selection and Folder sections moved immediately above Compare.
+Menu section headings use native keyboard/touch details/summary collapsers,
+expanded on every fresh page load. Controls are reparented, never recreated;
+collapsed state survives ordinary menu data updates. Sections with multiple
+headings (Roots/Location) collapse independently. Generated menu sections are
+enhanced when inserted. Training diagnostics and Settings panels unaffected.
+Verified frontend/Python syntax; same-root marker/selection release, partial
+move errors, failed/unrelated selections and rename compatibility; section order;
+independent expanded collapsers, original control identity, retained collapse
+state on later updates. Actual browser/mobile rendering not tested.
+Apply over Z1r: stop Vision, extract patch, restart and refresh browser.
+This bundles both previously unshipped minor move tweaks and menu changes.
+No dependencies/models/training changes. ZIP reconstruction/CRC/hash verified.
+Live installation/archive and GitHub unchanged.

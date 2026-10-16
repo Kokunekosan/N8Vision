@@ -5,7 +5,7 @@
 A free, open-source image library for browsing generated images, pruning files,
 inspecting metadata and preparing selected subjects for editing.
 
-**Official alpha: I.2t-l-Z1a.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1a).
+**Official alpha: I.2t-l-Z1w.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1w).
 No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
 
 ## Install and launch
@@ -46,6 +46,14 @@ Do not initialize or run a GitHub publishing checkout; use a separate live copy.
 - Mobile Menu and Filters switch cards. **Clear Selected** is directly below the hamburger.
 - Inspector and mask studio support **+/− zoom**, **Fit**, **WASD** panning and a touch stick. Framing moves image/mask/box layers together.
 
+Recent polish includes optional desktop library windows, quicker first-card
+display, immediate completed-row redraw, responsive selection/file actions,
+inclusive selection across offscreen images, moved-image hand-truck markers,
+collapsible menu sections, and mobile Back dismissing the active panel.
+Desktop window size is configured in Settings / Library, in steps of 1,000.
+Cross-window inclusive selection is supported for unfiltered Filesystem order;
+an unavailable anchor in other views is reported rather than guessed.
+
 ## Subject tools: selected images, on demand
 
 These are specialist tools for images you plan to work on. Select the intended
@@ -76,25 +84,27 @@ It trains a supervised class head on frozen pretrained visual features; it does
 not fine-tune your preferred LM or the anatomy/ownership parser. Ownership and
 mask corrections remain valuable teaching records for future parser work.
 
-At least **two classes**, each with **three different source images**, are needed
-for an initial run. This minimum creates a source-separated training/validation
-split; it is not an accuracy guarantee. Build varied examples and review masks.
-Automatic inference never teaches itself. Training after manual Learn commits
-can be switched off. Extra requests during training coalesce into one follow-up.
+Start with at least **two classes** and **three distinct source images per
+class**. Classes with insufficient examples wait for more teaching. Training
+fits class heads on frozen CLIP features, checks source-separated validation,
+and admits qualifying classes independently; a failing class need not block
+successful classes. Rejected updates retain the prior active model. Exact
+labels remain separate classes, so overlapping concepts need varied examples.
 
-The training-button light and text distinguish queued, running, activated,
-validation-rejected and failed states. A completed training job may still fail
-validation: the prior active model then remains in use. Per-class held-out
-results explain the rejection. Learned recognition stays a draft until confirmed.
-A previous validated model can be restored. See the verification reports for
-exact acceptance checks and current limits.
+Automatic inference never teaches itself. **Learn Subject** records explicit
+manual teaching; automatic training after these commits can be disabled.
+The training-button light shows progress, and its diagnostics drawer explains
+per-class validation and deferrals. Incomplete classes stay visible in the menu.
+Learned recognition assigns draft labels to unidentified separated subjects;
+review them before treating them as confirmed. A previous validated model can
+be restored.
 
 ## Alpha status and testing
 
 Source/API checks, controlled real encoder/class-training tests, archive checks
 and simulated mobile/framing control tests passed. The developer has exercised
 mobile browsing, remote inspection and subject identification in live use.
-Recent mobile drawer and zoom controls still need broader device testing.
+The latest mobile Back guard still needs broader Android/iOS device testing.
 A clean Internet installation and every GPU/Comfy combination have not been
 end-to-end tested. Report edition/version, device and reproduction steps with
 bugs; remove tokens, personal paths and private image content from shared logs.

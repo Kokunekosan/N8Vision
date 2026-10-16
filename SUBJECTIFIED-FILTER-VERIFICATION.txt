@@ -1,0 +1,16 @@
+Z1d: Subjectified archive-status filter.
+Search Subjectified in Filters; add its magnet. + shows images with named
+subjects; - excludes those images and keeps unfinished/unprocessed ones.
+Requires at least one positive subject observation and every active subject
+named; unknown/unidentified labels, unresolved splits or overlapping split
+masks remain unfinished. Ordinary detections do not count as subjectification.
+This is completion of labeling, not proof of label accuracy or manual training.
+No synthetic observation/badge is written. State follows current observations.
+Filter works with presets. Subject separation also applies this active filter
+to selected images, including hidden selections retained from earlier views.
+No automatic inference starts when a filter changes. No model/dependency changes.
+Verified JS syntax, seven representative subject states, +/- filtering,
+batch exclusion and stable filter identity for preset roundtrips.
+Physical browser/phone layout not tested. Apply over Z1c: stop Vision, extract
+patch, restart and refresh browser. Exact ZIP reconstruction/CRC/hash verified.
+Live installation and GitHub unchanged.

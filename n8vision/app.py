@@ -6,10 +6,11 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 from send2trash import send2trash
 from .profiles import profile,route_capability,missing_modules
+from .filesystem_order import filesystem_key
 EDITION=profile()
 _missing=missing_modules(EDITION['edition'])
 if _missing:raise RuntimeError("N8Vision edition dependencies missing: "+", ".join(_missing))
@@ -39,7 +40,7 @@ async def edition_capabilities(request:Request,call_next):
  return await call_next(request)
 
 @app.get('/api/edition')
-def edition_info():return {**EDITION,'version':'I.2t-l-Z1a','subject_intelligence_available':EDITION['subject_intelligence']}
+def edition_info():return {**EDITION,'version':'I.2t-l-Z1w','subject_intelligence_available':EDITION['subject_intelligence']}
 
 LOCAL_ATTENTION=0
 @app.get('/api/instance')
@@ -1286,6 +1287,7 @@ def browse_new(path:str=Query(...),recursive:bool=False,since:int=Query(0,ge=0),
  return packet
 
 def _browse_chunk_worker(token:str,p:Path,recursive:bool):
+ from .filesystem_order import ordered_paths
  t0=time.perf_counter();total=0;batch=[]
  try:
   def candidates():
@@ -1296,8 +1298,8 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    with BROWSE_SESSIONS_LOCK:
     sess=BROWSE_SESSIONS.get(token)
     if sess:sess['notice_cursor']=notice_cursor;sess['notice_epoch']=notice_epoch
-   for raw in paths:yield Path(raw)
-  def publish(paths):
+   for raw in ordered_paths(paths):yield Path(raw)
+  def publish(paths,chunk_index=None):
    nonlocal total
    records=[]
    for x in paths:
@@ -1315,13 +1317,34 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    if records:
     obs=obs_for([x['path'] for x in records])
     for x in records:x['observations']=obs.get(x['path'],[])
-    records.sort(key=lambda x:x['name'].casefold())
+    # Preserve the global directory/filename order across chunk boundaries.
    with BROWSE_SESSIONS_LOCK:
     sess=BROWSE_SESSIONS.get(token)
     if not sess or sess.get('cancelled'):return False
-    sess['chunks'].append(records);total+=len(records);sess['prepared']=total;sess['updated']=time.monotonic()
-   LOG.info('Browse chunk prepared: tx=%s · chunk=%d · %d files · prepared=%d',token,len(sess['chunks'])-1,len(records),total)
+    if chunk_index is None:
+     chunk_index=len(sess['chunks']);sess['chunks'].append(records)
+    else:sess['chunks'][chunk_index]=records
+    total+=len(records);sess['prepared']=total;sess['updated']=time.monotonic()
+   LOG.info('Browse chunk prepared: tx=%s · chunk=%d · %d files · prepared=%d',token,chunk_index,len(records),total)
    return True
+  with BROWSE_SESSIONS_LOCK:paged=bool(BROWSE_SESSIONS.get(token,{}).get('paged'))
+  if paged:
+   paths=list(candidates())
+   with BROWSE_SESSIONS_LOCK:
+    sess=BROWSE_SESSIONS.get(token)
+    if not sess or sess.get('cancelled'):return
+    sess.update(paths_ready=True,path_index=paths,total_files=len(paths),total_chunks=(len(paths)+BROWSE_CHUNK_SIZE-1)//BROWSE_CHUNK_SIZE)
+   LOG.info('Windowed catalog indexed: tx=%s · %s paths · page metadata prepared only on request',token,len(paths))
+   while not STOP_REQUESTED:
+    with BROWSE_SESSIONS_LOCK:
+     sess=BROWSE_SESSIONS.get(token)
+     if not sess or sess.get('cancelled'):return
+     pending=sorted(i for i in sess['requested_pages'] if i not in sess['chunks'] and i<sess['total_chunks'])
+     index=pending[0] if pending else None
+    if index is None:time.sleep(.05);continue
+    start=index*BROWSE_CHUNK_SIZE
+    if not publish(paths[start:start+BROWSE_CHUNK_SIZE],index):return
+   return
   for x in candidates():
    with BROWSE_SESSIONS_LOCK:
     sess=BROWSE_SESSIONS.get(token)
@@ -1352,7 +1375,7 @@ def directories(path:str=Query(...)):
  return {'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs]}
 
 @app.get('/api/browse/start')
-def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query(''),mobile:bool=False,previous_tx:str=Query('')):
+def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query(''),mobile:bool=False,windowed:bool=False,previous_tx:str=Query('')):
  p=norm(path);tx=tx or uuid.uuid4().hex
  if not p.exists() or not p.is_dir():raise HTTPException(404,'Directory not found')
  _browse_gate_begin(tx,str(p),recursive)
@@ -1363,15 +1386,27 @@ def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query(''),mobil
  # available for reverse paging until their caller explicitly replaces its previous transaction.
  with BROWSE_SESSIONS_LOCK:
   for old,sess in list(BROWSE_SESSIONS.items()):
-   if old!=tx and not sess.get('mobile'):sess['cancelled']=True
-  if mobile and previous_tx and previous_tx!=tx:
+   if old!=tx and not sess.get('paged',sess.get('mobile')):sess['cancelled']=True
+  if previous_tx and previous_tx!=tx:
    previous=BROWSE_SESSIONS.get(previous_tx)
-   if previous and previous.get('mobile'):
+   if previous and previous.get('paged',previous.get('mobile')):
     previous['cancelled']=True;previous['chunks'].clear()
-  BROWSE_SESSIONS[tx]={'path':str(p),'recursive':recursive,'mobile':mobile,'chunks':[],'complete':False,'error':None,'prepared':0,'cancelled':False,'updated':time.monotonic()}
+  BROWSE_SESSIONS[tx]={'path':str(p),'recursive':recursive,'mobile':mobile,'paged':mobile or windowed,'requested_pages':set(),'paths_ready':False,'chunks':{} if mobile or windowed else [],'complete':False,'error':None,'prepared':0,'cancelled':False,'updated':time.monotonic()}
  threading.Thread(target=_browse_chunk_worker,args=(tx,p,recursive),name=f'browse-{tx[:8]}',daemon=True).start()
- LOG.info('Browse chunk pipe opened: tx=%s · %s · recursive=%s · bite=%d',tx,p,recursive,BROWSE_CHUNK_SIZE)
+ LOG.info('Browse chunk pipe opened: tx=%s · %s · recursive=%s · bite=%d · mode=%s',tx,p,recursive,BROWSE_CHUNK_SIZE,'mobile demand' if mobile else 'desktop window demand' if windowed else 'full catalog')
  return {'browse_tx':tx,'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs],'recursive':recursive,'chunk_size':BROWSE_CHUNK_SIZE}
+
+@app.get('/api/browse/range')
+def browse_range(tx:str=Query(...),first:int=Query(...,ge=0),last:int=Query(...,ge=0)):
+ if last<first or last-first>=200000:raise HTTPException(400,'Invalid selection range')
+ with BROWSE_SESSIONS_LOCK:
+  sess=BROWSE_SESSIONS.get(tx)
+  if not sess or sess.get('cancelled'):raise HTTPException(409,'Browse changed; choose the selection anchor again')
+  paths=sess.get('path_index')
+  if paths is None:raise HTTPException(409,'Archive index not ready; retry selection')
+  if last>=len(paths):raise HTTPException(400,'Selection range exceeds archive')
+  result=[{'path':str(path),'index':index} for index,path in enumerate(paths[first:last+1],first)]
+ return {'browse_tx':tx,'paths':result}
 
 @app.get('/api/browse/chunk')
 def browse_chunk(tx:str=Query(...),index:int=Query(...,ge=0)):
@@ -1383,7 +1418,12 @@ def browse_chunk(tx:str=Query(...),index:int=Query(...,ge=0)):
    if not sess:raise HTTPException(404,'Browse transaction expired')
    if sess.get('cancelled'):raise HTTPException(409,'Browse transaction superseded')
    chunks=sess['chunks']
-   if index<len(chunks):
+   if sess.get('paged'):
+    sess['requested_pages'].add(index)
+    if sess.get('error'):return {'browse_tx':tx,'index':index,'files':[],'prepared':sess['prepared'],'complete':True,'error':sess['error']}
+    if sess.get('paths_ready') and (index in chunks or index>=sess['total_chunks']):
+     return {'browse_tx':tx,'index':index,'files':chunks.get(index,[]),'prepared':sess['total_files'],'metadata_prepared':sess['prepared'],'complete':index>=sess['total_chunks']-1,'error':None,'notice_cursor':sess.get('notice_cursor',0),'notice_epoch':sess.get('notice_epoch','')}
+   elif index<len(chunks):
     return {'browse_tx':tx,'index':index,'files':chunks[index],'prepared':sess['prepared'],'complete':bool(sess['complete'] and index==len(chunks)-1),'error':sess.get('error'),'notice_cursor':sess.get('notice_cursor',0),'notice_epoch':sess.get('notice_epoch','')}
    if sess['complete']:
     return {'browse_tx':tx,'index':index,'files':[],'prepared':sess['prepared'],'complete':True,'error':sess.get('error'),'notice_cursor':sess.get('notice_cursor',0),'notice_epoch':sess.get('notice_epoch','')}
@@ -1397,7 +1437,7 @@ def browse(path:str=Query(...),recursive:bool=False,tx:str=Query('')):
   _browse_gate_stable(tx);raise HTTPException(404,'Directory not found')
  try:
   t=time.perf_counter();dirs=sorted((x for x in p.iterdir() if x.is_dir()),key=lambda x:x.name.casefold());LOG.info('Browse phase directories: %d · %.3fs',len(dirs),time.perf_counter()-t)
-  t=time.perf_counter();it=p.rglob('*') if recursive else p.iterdir();files=sorted((x for x in it if image_file(x)),key=lambda x:x.name.casefold());LOG.info('Browse phase enumerate: %d images · %.3fs',len(files),time.perf_counter()-t)
+  t=time.perf_counter();it=p.rglob('*') if recursive else p.iterdir();files=sorted((x for x in it if image_file(x)),key=lambda x:filesystem_key(x));LOG.info('Browse phase enumerate: %d images · %.3fs',len(files),time.perf_counter()-t)
  except PermissionError:
   _browse_gate_stable(tx);raise HTTPException(403,'Permission denied')
  except Exception:
@@ -1463,6 +1503,17 @@ class TeachConceptRequest(BaseModel):
  model:str|None=None
  confidence:float|None=None
  replace_observation:dict|None=None
+
+@app.get('/api/observations/custom-labels')
+def custom_observation_labels():
+ with db() as c:
+  rows=c.execute("SELECT DISTINCT concept FROM observations WHERE provider IN ('human-correction','human-teach') AND confidence>0 ORDER BY concept COLLATE NOCASE").fetchall()
+  labels=[str(r[0]).strip() for r in rows if str(r[0]).strip()]
+  if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='corrections'").fetchone():
+   labels.extend(str(r[0]).strip() for r in c.execute("SELECT DISTINCT corrected_concept FROM corrections WHERE corrected_concept IS NOT NULL AND action IN ('teach','relabel')") if str(r[0]).strip())
+ unique={}
+ for label in labels:unique.setdefault(label.casefold(),label)
+ return {'labels':sorted(unique.values(),key=str.casefold)}
 
 @app.post('/api/observations/correct')
 def correct_observation(req:ObservationCorrectionRequest):
@@ -2194,7 +2245,7 @@ def delete(req:Paths):
  # "Polite nuclear delete": park background observers, delete from filesystem first,
  # then atomically erase the successfully deleted identities from N8Vision's archive.
  requested=[str(norm(raw)) for raw in req.paths]
- done=[];failed=[]
+ started=time.perf_counter();done=[];failed=[]
  _delete_gate_paths(requested,True)
  try:
   # Give any already-running BRISQUE bite a brief chance to leave the critical path.
@@ -2209,6 +2260,7 @@ def delete(req:Paths):
     send2trash(str(p));done.append(raw)
    except Exception as e:
     failed.append({'path':raw,'error':str(e)})
+  filesystem_done=time.perf_counter()
   if done:
    with db() as c:
     for raw in done:
@@ -2218,6 +2270,7 @@ def delete(req:Paths):
     c.commit()
    bump_obs_revision()
    LOG.info('Nuclear delete: filesystem + archive purged for %s path(s); %s failed',len(done),len(failed))
+  LOG.info('Delete timing: filesystem %.3fs · archive %.3fs · total %.3fs',filesystem_done-started,time.perf_counter()-filesystem_done,time.perf_counter()-started)
   return {'deleted':done,'failed':failed}
  finally:
   _delete_gate_paths(requested,False)
@@ -3198,6 +3251,7 @@ def compare_duplicates(req:DuplicateRequest):
 class SubjectRequest(BaseModel):
  paths:list[str]
  classes:list[str]=[]
+ max_passes:int=Field(default=8,ge=1,le=100)
 
 SUBJECT_JOB_LOCK=threading.Lock()
 def subject_paths(payload,progress=None):
@@ -3294,12 +3348,163 @@ def subject_paths(payload,progress=None):
    if progress:progress(index+1,len(payload['paths']))
  return {'analyzed':len(payload['paths']),'masks_created':created,'masks_inherited':inherited,'boxes_enriched':attached,'non_subject_drafts_retired':retired,'failed':failed,'review_required':True}
 
+def independent_subject_job(payload,progress=None):
+ from .subject_stages import extract,name_regions
+ from .subjects import geometry_mask,same_instance,rle,PIPELINE,REVISION
+ from .subject_learning import is_subject
+ stage=payload['stage'];created=0;named=0;passes=0;untested=0;failed=[]
+ with SUBJECT_JOB_LOCK:
+  for index,raw in enumerate(payload['paths']):
+   if progress:progress(index,len(payload['paths']),phase='Extracting foreground' if stage=='extract' else 'YOLAST naming')
+   p=norm(raw)
+   try:
+    before=p.stat();signature=(before.st_mtime_ns,before.st_size)
+    with db() as c:rows=[dict(r) for r in c.execute("SELECT rowid AS oid,* FROM observations WHERE path=? AND kind='mask' AND confidence>0",(str(p),))]
+    rows=[r for r in rows if is_subject(r)]
+    if stage=='extract':candidates,shape=extract(p,HF_CACHE)
+    else:
+     # Optional naming only fills unidentified subjects; confirmed/custom identities stay intact.
+     rows=[r for r in rows if r['concept'].strip().casefold() in ('unknown','unidentified','unidentified subject')]
+     updates,used,pending=name_regions(p,rows,ULTRA_MODELS/'bbox'/'yolov8s-worldv2.pt',payload.get('classes',[]),payload['max_passes'],lambda:progress(index,len(payload['paths'])) if progress else None)
+     passes+=used;untested+=pending
+    after=p.stat()
+    if (after.st_mtime_ns,after.st_size)!=signature:raise ValueError('Source changed during inference; retry this image')
+    if progress:progress(index,len(payload['paths']))
+    changed=False
+    with db() as c:
+     if stage=='extract':
+      # Re-read after inference; never retire or relabel existing annotations here.
+      current=[dict(r) for r in c.execute("SELECT rowid AS oid,* FROM observations WHERE path=? AND kind='mask' AND confidence>0",(str(p),))]
+      existing=[]
+      for row in current:
+       if not is_subject(row):continue
+       try:
+        g=json.loads(row['geometry']);mask=geometry_mask(g,shape)
+        if mask is not None:existing.append({'bbox':g['bbox'],'mask':mask})
+       except (ValueError,TypeError):continue
+      for candidate in candidates:
+       if any(same_instance(candidate,old) for old in existing):continue
+       x,y,z,t=candidate['bbox']
+       g={'bbox':[x,y,z,t],'mask_size':[z-x,t-y],'mask_rle':rle(candidate['mask'][y:t,x:z]),'source_size':[shape[1],shape[0]],'scope':'mask','method':'birefnet','subject_role':True,'subject_pipeline':PIPELINE,'birefnet_revision':REVISION,'review_status':'draft','review_required':True,'name_accepted':False,'extraction_only':True}
+       inserted=c.execute("INSERT OR IGNORE INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,'unidentified subject',1,'subject-intelligence',?,'mask',?,unixepoch())",(str(p),PIPELINE,json.dumps(g,sort_keys=True,separators=(',',':'))))
+       created+=inserted.rowcount;changed=changed or bool(inserted.rowcount)
+     else:
+      for row,label,g in updates:
+       updated=c.execute('UPDATE observations SET concept=?,geometry=?,updated=unixepoch() WHERE rowid=? AND concept=? AND geometry IS ? AND confidence>0',(label,json.dumps(g,sort_keys=True,separators=(',',':')),row['oid'],row['concept'],row['geometry']))
+       if updated.rowcount!=1:raise ValueError('Subject changed during naming; refresh and retry')
+       named+=int(label!='unidentified subject');changed=True
+    if changed:bump_obs_revision()
+   except JobCancelled:raise
+   except Exception as exc:failed.append({'path':str(p),'error':str(exc)})
+   if progress:progress(index+1,len(payload['paths']))
+ return {'stage':stage,'images':len(payload['paths']),'masks_created':created,'subjects_named':named,'yolast_passes':passes,'regions_deferred_by_budget':untested,'failed':failed,'review_required':True}
+
+@app.post('/api/subjects/name')
+def subject_name(req:SubjectRequest):
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject naming requires Full')
+ if not req.paths or len(req.paths)>1000:raise HTTPException(400,'Choose between 1 and 1000 images')
+ if len(req.classes)>200 or any(len(x)>100 for x in req.classes):raise HTTPException(400,'Subject vocabulary is too large')
+ cfg=_load_config();cfg.setdefault('subject_naming',{})['max_passes']=req.max_passes;_save_config(cfg)
+ return start_job('subject-yolast-naming',independent_subject_job,{'stage':'name','paths':list(dict.fromkeys(req.paths)),'classes':req.classes,'max_passes':req.max_passes})
+
+@app.get('/api/subjects/naming/settings')
+def subject_naming_settings():
+ return {'max_passes':max(1,min(100,int(_load_config().get('subject_naming',{}).get('max_passes',8))))}
+
+
+GUIDED_SUBJECT_REVIEWS={}
+
+class GuidedSubjectRequest(SubjectObservationRef):
+ hints:list[list[float]]
+ max_passes:int=Field(default=17,ge=0,le=100)
+
+def guided_subject_job(payload,progress=None):
+ from .subject_guided import build
+ import numpy as np
+ ref=SubjectObservationRef(**payload['subject']);p=norm(ref.path)
+ with SUBJECT_JOB_LOCK:
+  with db() as c:row=subject_observation(c,ref)
+  before=p.stat();signature=[before.st_mtime_ns,before.st_size]
+  parent=json.loads(row['geometry'])
+  def sam_crop(image,boxes):
+   from ultralytics import SAM
+   with SAM_INFERENCE_LOCK:
+    model=MODEL_CACHE.get('sam-box')
+    if model is None:
+     weight=SAM_MODELS/'sam_b.pt'
+     model=SAM(str(weight if weight.exists() else 'sam_b.pt'));MODEL_CACHE['sam-box']=model
+    result=model(image,bboxes=boxes,verbose=False)[0]
+   if result.masks is None:raise ValueError('SAM returned no masks')
+   masks=[]
+   for tensor in result.masks.data:
+    mask=tensor.detach().cpu().numpy()>.5
+    if mask.shape!=(image.height,image.width):mask=np.asarray(Image.fromarray(mask.astype('uint8')).resize(image.size,Image.Resampling.NEAREST))>0
+    masks.append(mask)
+   return masks
+  result=build(p,parent,payload['hints'],HF_CACHE,sam_crop,ULTRA_MODELS/'bbox'/'yolov8s-worldv2.pt',payload['max_passes'],progress)
+  after=p.stat()
+  if [after.st_mtime_ns,after.st_size]!=signature:raise ValueError('Source changed during split; original retained')
+  if progress:progress(len(payload['hints'])+2,len(payload['hints'])+2,phase='Split ready for review')
+  token=uuid.uuid4().hex
+  with LOCK:
+   GUIDED_SUBJECT_REVIEWS[token]={'subject':payload['subject'],'signature':signature,'result':result,'created':time.time()}
+   for key in list(GUIDED_SUBJECT_REVIEWS):
+    if time.time()-GUIDED_SUBJECT_REVIEWS[key]['created']>86400:GUIDED_SUBJECT_REVIEWS.pop(key,None)
+  return {'review_id':token,'subjects':len(result['candidates']),'naming_passes':result['naming_passes'],'path':str(p),'parent_bbox':parent['bbox']}
+
+@app.post('/api/subjects/guided-split')
+def queue_guided_subject(req:GuidedSubjectRequest):
+ if not EDITION['subject_intelligence']:raise HTTPException(403,'Guided subjects require Full')
+ if not 2<=len(req.hints)<=16:raise HTTPException(400,'Mark between 2 and 16 sub-subjects')
+ with db() as c:row=subject_observation(c,req)
+ from .subject_learning import is_subject
+ if not is_subject(row):raise HTTPException(400,'Select a subject mask')
+ g=json.loads(row['geometry']);x,y,z,t=g['bbox']
+ for box in req.hints:
+  if len(box)!=4 or not all(math.isfinite(v) for v in box):raise HTTPException(400,'Invalid hint box')
+  a,b,d,e=box
+  if not (x<=a<d<=z and y<=b<e<=t and d-a>=2 and e-b>=2):raise HTTPException(400,'Hints must be inside the selected subject crop')
+ return start_job('subject-guided-split',guided_subject_job,{'subject':{k:v for k,v in req.model_dump().items() if k not in ('hints','max_passes')},'hints':req.hints,'max_passes':req.max_passes})
+
+@app.get('/api/subjects/guided-split/{token}')
+def guided_subject_review(token:str):
+ with LOCK:review=GUIDED_SUBJECT_REVIEWS.get(token)
+ if not review:raise HTTPException(404,'Split review expired; run again')
+ return review['result']
+
+class GuidedSubjectCommit(BaseModel):
+ labels:list[str]
+
+@app.post('/api/subjects/guided-split/{token}/accept')
+def accept_guided_subject(token:str,req:GuidedSubjectCommit):
+ with LOCK:review=GUIDED_SUBJECT_REVIEWS.get(token)
+ if not review:raise HTTPException(404,'Split review expired; run again')
+ results=review['result']['candidates']
+ if len(req.labels)!=len(results) or any(not label.strip() or len(label)>200 for label in req.labels):raise HTTPException(400,'Name each result, or leave it as unidentified subject')
+ ref=SubjectObservationRef(**review['subject']);p=norm(ref.path);st=p.stat()
+ if [st.st_mtime_ns,st.st_size]!=review['signature']:raise HTTPException(409,'Source changed; run split again')
+ with SUBJECT_JOB_LOCK:
+  with db() as c:
+   parent=subject_observation(c,ref);g=json.loads(parent['geometry']);g['subject_role']=False;g['guided_split_replaced']=True
+   c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=?',(json.dumps(g,sort_keys=True,separators=(',',':')),parent['oid']))
+   for candidate,label in zip(results,req.labels):
+    label=label.strip();geometry={**candidate['geometry'],'review_status':'approved','review_required':False,'guided_split_parent':parent['oid']}
+    if label!=candidate['concept']:
+     from .subject_learning import mark_manual
+     geometry=mark_manual(geometry,'label_changed',label,candidate['concept'])
+     geometry['name_accepted']=label.casefold() not in ('unknown','unidentified','unidentified subject');geometry['name_confidence']=1.
+    c.execute("INSERT INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,?,1,'subject-intelligence','subjects-guided','mask',?,unixepoch())",(str(p),label,json.dumps(geometry,sort_keys=True,separators=(',',':'))))
+ with LOCK:GUIDED_SUBJECT_REVIEWS.pop(token,None)
+ bump_obs_revision()
+ return {'ok':True,'subjects':len(results),'training_started':False}
+
+
 @app.post('/api/subjects/separate')
 def subject_separate(req:SubjectRequest):
  if not EDITION['subject_intelligence']:raise HTTPException(403,'Subject separation requires Full')
  if not req.paths or len(req.paths)>1000:raise HTTPException(400,'Choose between 1 and 1000 images')
  if len(req.classes)>200 or any(len(x)>100 for x in req.classes):raise HTTPException(400,'Subject vocabulary is too large')
- return start_job('subject-separation',subject_paths,{'paths':list(dict.fromkeys(req.paths)),'classes':req.classes})
+ return start_job('subject-separation',independent_subject_job,{'stage':'extract','paths':list(dict.fromkeys(req.paths))})
 
 class SubjectQwenRequest(BaseModel):
  paths:list[str]
@@ -3462,6 +3667,7 @@ def confirm_subject_class(req:ConfirmSubjectClassRequest):
 
 class RecognizeSubjectClassesRequest(BaseModel):
  paths:list[str]
+ apply_unidentified:bool=True
 
 def recognize_subject_classes(payload,progress=None):
  import tempfile
@@ -3484,23 +3690,33 @@ def recognize_subject_classes(payload,progress=None):
    if (before.st_size,before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns):raise ValueError('Source changed while preparing recognition')
    signatures.append((after.st_size,after.st_mtime_ns));image=folder/(str(index)+'.png');image.write_bytes(data);images.append({'image':str(image),'crop_sha256':sha(image)})
   result=run_worker(subject_class_root(),reconstruction_root(),{'mode':'predict','images':images,'checkpoint':trained['checkpoint']},progress)
- reviewed=0
+ predictions=result.get('predictions',[])
+ if len(predictions)!=len(targets):raise ValueError('Recognition returned an incomplete result set; no reviews applied')
+ reviewed=0;applied=0;accepted=0;reasons={}
  with db() as c:
   if active(subject_class_root())['revision']!=trained['revision']:raise ValueError('Active class model changed; run recognition again')
-  for row,signature,prediction in zip(targets,signatures,result['predictions']):
+  for row,signature,prediction in zip(targets,signatures,predictions):
    st=Path(row['path']).stat()
    if (st.st_size,st.st_mtime_ns)!=signature:raise ValueError('Source changed; learned review was not applied')
    g=geometry(row['geometry']);g['trained_class_review']={**prediction,'revision':trained['revision']}
-   update=c.execute('UPDATE observations SET geometry=?,updated=unixepoch() WHERE rowid=? AND geometry IS ?',(json.dumps(g,sort_keys=True,separators=(',',':')),row['oid'],row['geometry']))
+   label=row['concept'];accepted+=int(prediction['accepted'])
+   if prediction['accepted'] and payload.get('apply_unidentified',True) and label.strip().casefold() in ('unknown','unidentified','unidentified subject'):
+    label=prediction['label'];g.update(name_accepted=True,name_confidence=prediction['score'],naming_method='learned-classifier');applied+=1
+   if not prediction['accepted']:
+    for reason in prediction.get('rejection_reasons',[]):reasons[reason]=reasons.get(reason,0)+1
+   update=c.execute('UPDATE observations SET concept=?,geometry=?,updated=unixepoch() WHERE rowid=? AND concept=? AND geometry IS ?',(label,json.dumps(g,sort_keys=True,separators=(',',':')),row['oid'],row['concept'],row['geometry']))
    if update.rowcount!=1:raise ValueError('Subject changed; learned review was not applied')
    reviewed+=1
  if reviewed:bump_obs_revision()
- return {'reviewed':reviewed,'revision':trained['revision'],'predictions':result['predictions'],'review_required':True}
+ summary=f'Learned recognition: {reviewed} subjects, {accepted} accepted, {applied} unidentified subjects labeled, {reviewed-accepted} abstained'
+ LOG.info('%s; active classes: %s',summary,', '.join(trained['classes']))
+ for reason,count in reasons.items():LOG.info('Recognition abstentions: %s — %s',count,reason)
+ return {'reviewed':reviewed,'accepted':accepted,'applied':applied,'abstained':reviewed-accepted,'summary':summary,'paths':list(dict.fromkeys(payload['paths'])),'revision':trained['revision'],'predictions':predictions,'review_required':True}
 
 @app.post('/api/subjects/classes/recognize')
 def queue_recognize_subject_classes(req:RecognizeSubjectClassesRequest):
  if not req.paths or len(req.paths)>100:raise HTTPException(400,'Select between 1 and 100 images')
- return start_job('subject-class-recognition',recognize_subject_classes,{'paths':list(dict.fromkeys(req.paths))})
+ return start_job('subject-class-recognition',recognize_subject_classes,{'paths':list(dict.fromkeys(req.paths)),'apply_unidentified':req.apply_unidentified})
 
 @app.get('/api/subjects/reconstruction/status')
 def reconstruction_status():
@@ -3616,7 +3832,9 @@ def start_job(kind,fn,*args):
  _write_active_job_journal()
  def run():
   try:
-   JOBS[jid]['state']='running'; _write_active_job_journal(); LOG.info('Job %s started: %s (%s items)',jid,kind,JOBS[jid]['total'])
+   JOBS[jid]['state']='running'; _write_active_job_journal()
+   if kind=='subject-class-training':LOG.info('Job %s started: %s (collecting confirmed teaching set)',jid,kind)
+   else:LOG.info('Job %s started: %s (%s items)',jid,kind,JOBS[jid]['total'])
    res=fn(*args,progress=lambda d,t,**meta:job_progress(jid,d,t,**meta))
    if kind.startswith('comfy:'):
     with OUTPUT_RECOVERY_LOCK:b=COMFY_RECOVERY_BATCHES.get(jid)
@@ -3629,8 +3847,11 @@ def start_job(kind,fn,*args):
    else:
     JOBS[jid].update(state='done',result=res,done=JOBS[jid]['total'],updated=time.time())
     if kind=='subject-class-training':
-     outcome='Class model activated' if res.get('activated') else 'Candidate rejected by validation; active model retained'
-     JOBS[jid]['phase']=outcome;LOG.info('Job %s: %s (validation %.1f%%)',jid,outcome,100*float(res.get('validation',{}).get('accuracy',0)))
+     from .subject_training_report import describe_training
+     diagnostics=res.get('diagnostics') or describe_training(res)
+     outcome='Waiting for more teaching examples' if res.get('deferred') else 'Class model activated' if res.get('activated') else 'Candidate rejected by validation'
+     JOBS[jid]['phase']=outcome
+     for line in diagnostics:LOG.info('Job %s: %s',jid,line)
     else:LOG.info('Job %s complete: %s',jid,kind)
    _write_active_job_journal()
   except JobCancelled as e:

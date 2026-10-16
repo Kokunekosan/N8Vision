@@ -1,0 +1,20 @@
+Z1q: server-side demand paging for windowed desktop and mobile.
+Earlier frontend first500/window limits did not stop server eagerly preparing
+all observation-heavy pages; requests near17k also prepared all previous pages.
+Windowed sessions now index ordered paths once, then wait for explicitly
+requested500-page indices. A request for page34 prepares files17000-17499
+directly. No preceding/unrequested metadata pages are prepared. Whole-catalog
+desktop remains sequential. Windowed sessions retain requested pages for reverse
+reads and retire on cancellation. Backend path index remains whole-library;
+heavy stat/observation assembly is per requested page. Noticer behavior unchanged.
+Response distinguishes known total paths from metadata_prepared; end-page totals
+remain correct for desktop/mobile pagers. Startup logs identify full/windowed
+mode and indexed paths versus prepared metadata. Browser logs first mount count.
+Verified AST-isolated real threaded worker/API on50k fake paths: directpage34
+exactly500 stat+observation records, idle pause, nextpage, finalpage/end total,
+cancellation, no preceding pages and full-catalog1200 sequence compatibility.
+Python/frontend syntax passed. Actual disk/archive/thumbnail startup timing not
+measured. No archive rebuild or folder realignment performed or required by fix.
+Apply over Z1p: stop Vision, extract patch, restart and refresh browser.
+No model/dependency/data changes. ZIP reconstruction/CRC/hash verified.
+Live installation/archive and GitHub unchanged.

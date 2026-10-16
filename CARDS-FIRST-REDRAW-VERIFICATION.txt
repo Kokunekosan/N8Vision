@@ -1,0 +1,16 @@
+Z1u: cards-first explicit Redraw over Z1t.
+Existing Redraw performed synchronous thumbnail invalidation, advanced the pixel
+cache epoch, and discarded every prepared row before rendering. No server-side
+archive reconciliation was called by this button in the supplied source.
+Redraw now retains valid decoded thumbnails and row prefabs, compacts deletion
+tombstones on this explicit rebuild, restores the surviving home card and awaits
+visible row preparation. Browser cache/folder reconciliation starts after two
+animation frames and a task yield. Cleanup yields every 1000 catalog entries and
+100 cached assets; root, catalog identity and redraw generation cancel stale work.
+Current thumbnail URLs remain cached. No background grid rebuild or viewport reset.
+VM checks: card render/readiness before deferred reconciliation; surviving cache
+retained, obsolete asset released, tombstone compaction, home pin, buttons released,
+stale reconciliation ignored. Frontend/Python syntax and ZIP reconstruction/CRC/
+exact entry bytes/SHA256 verified. Actual browser timing not measured.
+Apply over Z1t: stop Vision, extract patch, restart and refresh browser.
+Live installation/archive and GitHub unchanged.

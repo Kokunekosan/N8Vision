@@ -1,0 +1,17 @@
+Z1t: inclusive Shift selection over Z1s.
+Suppress native Shift text selection and card dragging; retain catalog-index
+anchor and view identity. Resident ranges use displayed order, independent of
+rendered DOM rows. Unfiltered Filesystem ranges across evicted archive windows
+fetch path IDs only from the existing session snapshot; no image loading,
+metadata verification, page focus or grid rebuild. Deleted/forwarded markers
+are excluded using pager overlays. New click, clear, browse, move/delete and
+changed view invalidate pending responses. Filtered/differently sorted windows
+with absent anchor explicitly decline rather than guessing range order.
+Tests: actual frontend handler with evicted anchor and unloaded intermediates;
+reverse/inclusive ranges, marker exclusion, missing anchor, native Shift guard,
+stale semantic response and filtered refusal. Python range endpoints and invalid/
+cancelled sessions over 50k snapshot; prior demand-page worker regression passed.
+Frontend/Python syntax passed. Real browser/autoscroll behavior not measured.
+Apply over Z1s: stop Vision, extract patch, restart and refresh browser.
+ZIP reconstruction, CRC, exact entry bytes and SHA256 verified.
+Live installation/archive and GitHub unchanged.

@@ -1,0 +1,15 @@
+Z1w: mobile browser Back dismisses active panels before navigation.
+One same-URL history guard while mobile panels are open. Back closes the most
+recently opened overlay, then rearms only for remaining panels. Manual closure
+retires the guard; bare-grid Back retains ordinary browser behavior.
+Covers control menu, filters, Settings, inspector, mask editor, native dialogs,
+job preparation, refine/workshop wizards and interaction help. Existing close/
+cancel actions handle cleanup; dialog cancel handlers remain respected.
+Mutation observation tracks panel transitions without thumbnail or grid polling.
+Desktop behavior unchanged. Pairing history state preserved when guard is added.
+Tests: empty grid, nested panel Back order/rearm, manual closure retirement,
+reopening during pending retirement, history state preservation and JS syntax.
+No real Android/iOS navigation test performed; device confirmation required.
+Python syntax, ZIP incremental reconstruction/CRC/entry bytes/SHA256 verified.
+Apply over Z1v: stop Vision, extract patch, restart and refresh browser.
+Live installation/archive and GitHub unchanged.

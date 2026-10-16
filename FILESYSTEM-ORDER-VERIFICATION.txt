@@ -1,0 +1,19 @@
+Z1m: deterministic Filesystem grid sequence.
+Browse worker previously consumed watcher.files (unordered set), cut batches
+of 500, then sorted each batch by basename. Images mixed folders and broke
+sequence at chunk boundaries. Paths now globally ordered before batching by
+parent directory then natural filename, case-insensitive with stable tie breaks.
+Root-level files precede child-directory groups. Numeric sequences use 2 before
+10. No dependency on set hash, archive insertion order or batch size. Streaming
+and legacy browse share the same path key; no extra filesystem verification.
+Filesystem display restores catalog order even when comparison/semantic tools
+ranked the same membership, and honors reverse direction without mutating data.
+Filename sort remains a separate option. Existing live move/new-arrival position
+preservation is unchanged; reopen/refresh to get a freshly ordered catalog.
+Verified 1230 randomized paths across 3 folders, repeated set order, natural
+numbers and leading-zero tie breaks, 500-image chunk boundaries, Python/JS
+syntax, similarity-ranking override and reverse without input mutation.
+Live main-library browser ordering not measured. Apply over Z1l: stop Vision,
+extract patch, restart, refresh browser and reopen the library.
+Exact incremental reconstruction, ZIP CRC/entry bytes and SHA256 verified.
+Live installation, archive and GitHub unchanged.

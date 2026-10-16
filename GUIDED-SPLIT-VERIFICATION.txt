@@ -1,0 +1,23 @@
+Z1h: user-guided multi-subject segmentation in Inspector.
+Select a Subject mask, choose Split into multiple subjects, and draw 2-16 hint
+boxes in the parent crop. Mouse/touch drawing, Undo hint, optional 0-100 YOLAST
+pass budget (default17). Boxes prompt SAM, never clip its output to the hints.
+Pipeline: parent-crop BiRefNet, multi-box SAM instance proposals intersected
+with parent foreground, then optional bounded YOLAST naming. Existing masks,
+labels and teaching data stay unchanged while the background job runs.
+Review shows colored mask overlays, editable per-subject labels, actual naming
+pass count and remaining pixel-overlap warnings. Duplicate instance outputs
+fail without changing original. Shared pixels remain visible for user decisions.
+Accept explicitly stores split subjects and retains the original composite as
+a non-subject annotation. Cancel makes no archive change. Edited labels enable
+Learn Subject; accepting never trains automatically. Source and parent snapshot
+checks prevent applying stale results. Job results contain only review metadata;
+mask drafts fetched separately. Review last completed split supports reopening.
+Model logic tested with mocked inference: crop offsets, masks outside hints,
+RLE roundtrip, bounded/disabled naming, duplicate detection, overlap warnings.
+SQLite acceptance tested: original retained, children inserted, changed label
+pending manual learning, no training, double acceptance rejected. Python and
+frontend syntax passed. Actual SAM/BiRefNet mask quality and phone rendering
+need a real-image test; no heavyweight model benchmark performed here.
+Apply over Z1g: stop Vision, extract patch, restart, refresh browser.
+Exact ZIP reconstruction, CRC/hashes verified; live installation/GitHub unchanged.

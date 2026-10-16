@@ -1,0 +1,13 @@
+Z1c: saved custom labels and common-term dropdowns in Correct / Teach.
+Select a detection, then That's actually... to open the label dialog.
+Choose a previous manual label, a common term such as car, or type a new label.
+Use label explicitly commits the correction. Cancel/Escape makes no changes.
+Custom labels are archive-wide, recovered from manual observations/correction
+history and deduplicated ignoring case. Works across desktop and remote clients.
+Picking a label does not train; Learn Subject remains a separate manual action.
+Verified Python/JS syntax; isolated SQLite endpoint checks including no correction
+table, historical custom labels, excluding machine guesses and case duplicates.
+Simulated UI checks: saved list, car selection, explicit submit and cancellation.
+Physical browser/phone layout not tested. No model/dependency changes.
+Apply over Z1b: stop Vision, extract patch, restart, refresh browser.
+Exact incremental ZIP reconstruction/CRC/hashes verified. GitHub/live unchanged.

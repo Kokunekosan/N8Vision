@@ -5,6 +5,8 @@ for(const orientation of ['portrait','landscape'])try{const value=Number(localSt
 function mobileOrientation(){const v=window.visualViewport;return (v?.width||innerWidth)>(v?.height||innerHeight)?'landscape':'portrait'}
 function mobileColumns(){return mobileColumnPrefs[mobileOrientation()]}
 const S={edition:null,capabilities:{inference:false,processing:false},mobile:mobileDevice,viewer:null,path:null,parent:null,files:[],dirs:[],selected:new Set(),treeOpen:true,semantic:null,models:[],enabledModels:new Set(),obsRevision:0,qualityPath:null,boxes:false,masks:false,drawer:false,discovered:[],magnets:new Map(),magnetSeq:0,compare:null,sortKey:'none',sortDir:'asc',gridDetail:'hover',selectionAnchor:null,softCtrl:false,softShift:false,multiWork:[],multiIndex:-1,viewerStretch:false,viewerClean:false,defaultRoot:null,filterPresets:{},sanityBadges:'compact',hideAllBadges:readBadgePreference(),thumbnailCache:null,imageGridEnabled:true,uncappedUnsanity:false,storageClass:null,scopeRoot:null,scopeRecursive:false,catalogRecursive:false,scopeRootDirs:[],scopeSelections:new Set(),scopeSelectionAnchor:null,gridGapTenths:1,gridRedrawEpoch:0,ringBufferRows:50,ringSouthBias:2,thumbWarmEnabled:true,archiveRoots:[],promptTranslator:{model:'',type:'stable_diffusion',device:'default'},checkpointLibrary:null,textStreamSeen:new Set()};const $=s=>document.querySelector(s),enc=encodeURIComponent;
+function pagedBrowse(){return S.mobile||!!S.desktopWindowed}
+try{S.desktopWindowed=localStorage.getItem('n8vision.desktopWindowed')==='1';const size=Number(localStorage.getItem('n8vision.desktopWindowSize'));S.desktopWindowSize=Number.isInteger(size)&&size>=1000&&size<=100000&&size%1000===0?size:4000}catch(_){S.desktopWindowed=false;S.desktopWindowSize=4000}
 function readBadgePreference(){try{return localStorage.getItem('n8vision.hideAllBadges')==='1'}catch(_){return false}}
 function applyBadgeVisibility(){
  document.body.dataset.hideBadges=String(!!S.hideAllBadges);
@@ -58,18 +60,23 @@ function markEditionControls(){
 function applyEdition(info){
  S.edition=info.edition;S.capabilities=info;
  document.body.dataset.edition=info.edition;document.body.dataset.inference=String(!!info.inference);document.body.dataset.processing=String(!!info.processing);document.body.classList.remove('editionPending');
- const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z1a')+' · '+info.name;
+ const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z1w')+' · '+info.name;
  if(!info.processing)setMode('explore');
  document.body.dataset.subjectIntelligence=String(!!info.subject_intelligence);
  if(info.subject_intelligence&&!document.getElementById('subjectSeparateBtn')){
   const section=document.createElement('section'),heading=document.createElement('h3'),button=document.createElement('button'),detail=document.createElement('p');
-  heading.textContent='Subject separation · YOLAST';button.id='subjectSeparateBtn';button.textContent='Separate selected subjects';
-  detail.className='tiny';detail.textContent='BiRefNet foreground + YOLO-World names. Existing matching masks are reused. New masks need review. First use downloads model weights.';
+  heading.textContent='Subject extraction and naming';button.id='subjectSeparateBtn';button.textContent='Separate selected subjects · BiRefNet';
+  detail.className='tiny';detail.title='Subjectified filter: + requires named subjects; − excludes fully named images. Images with unidentified or unresolved subjects remain eligible. This status describes labels, not verified accuracy.';detail.textContent='BiRefNet extracts unnamed foreground regions only. Touching subjects may remain joined and need mask editing or subject reconstruction. Naming is a separate optional action. First use downloads model weights.';
   button.onclick=async()=>{
-   const paths=[...S.selected];if(!paths.length)return alert('Select images to separate their subjects.');
+   const paths=subjectificationTargets();if(!paths.length)return alert('Select images to separate their subjects. The Subjectified filter also excludes selected images that do not match.');
    button.disabled=true;
    try{const result=await post('/api/subjects/separate',{paths});$('#status').textContent='Subject separation queued · '+result.id;scheduleJobsPoll(500)}catch(error){alert(error.message)}finally{button.disabled=false}
   };
+  const yolast=document.createElement('button');yolast.textContent='Name selected subjects · YOLAST';
+  const passLabel=document.createElement('label'),passLimit=document.createElement('input');passLimit.type='number';passLimit.min='1';passLimit.max='100';passLimit.step='1';passLimit.value='8';passLabel.append(document.createTextNode('YOLAST maximum passes per image '),passLimit);
+  j('/api/subjects/naming/settings').then(settings=>passLimit.value=settings.max_passes).catch(()=>{});
+  const namingHelp=document.createElement('p');namingHelp.className='tiny';namingHelp.textContent='Optional YOLO-World naming, capped across all subjects and retries per image. Names only unidentified masks; preserves their pixels. Or skip YOLAST and use Recognize learned classes.';
+  yolast.onclick=async()=>{const paths=subjectificationTargets(),max_passes=Number(passLimit.value);if(!paths.length)return alert('Select images with extracted subject masks.');if(!Number.isInteger(max_passes)||max_passes<1||max_passes>100)return alert('Choose 1–100 passes per image.');yolast.disabled=true;try{const result=await post('/api/subjects/name',{paths,max_passes});$('#status').textContent='YOLAST naming queued · '+result.id;scheduleJobsPoll(500)}catch(error){alert(error.message)}finally{yolast.disabled=false}};
   const qwen=document.createElement('button');qwen.id='subjectQwenBtn';qwen.textContent='Inspect selected subjects with the language model';
   qwen.onclick=async()=>{const paths=[...S.selected];if(!paths.length)return alert('Select images with subject masks first.');qwen.disabled=true;try{const result=await post('/api/subjects/interpret',{paths});$('#status').textContent='Language model subject review queued · '+result.id;scheduleJobsPoll(500)}catch(error){alert(error.message)}finally{qwen.disabled=false}};
   const qwenHelp=document.createElement('p');qwenHelp.className='tiny';qwenHelp.textContent='Uses the selected Prompt Translator model in Comfy with image input. Draft names and visible features appear in the inspector; labels and masks stay unchanged.';
@@ -84,39 +91,49 @@ function applyEdition(info){
   const trainingLamp=document.createElement('span'),trainingCaption=document.createElement('span');trainingLamp.id='subjectTrainingLamp';trainingCaption.id='subjectTrainingCaption';Object.assign(trainingLamp.style,{display:'inline-block',width:'10px',height:'10px',borderRadius:'50%',marginRight:'8px'});train.textContent='';train.append(trainingLamp,trainingCaption);train.setAttribute('aria-live','polite');
   const showTrainingState=state=>{const busy=state.training?.state==='running',queued=state.training?.state==='queued',pending=!!state.training?.queued_update,last=state.runs?.[0]?.state;const color=busy?'#e9b44c':queued?'#66aaff':last==='active'?'#66d58c':last==='rejected'?'#ef8c42':last==='failed'?'#ed6464':'#999';trainingLamp.style.background=color;trainingLamp.style.boxShadow='0 0 5px '+color;trainingCaption.textContent=busy?(pending?'Training · next pass queued':'Training · click to queue next pass'):queued?'Training queued':last==='active'?'Training complete · train again':last==='rejected'?'Validation failed · train again':last==='failed'?'Training failed · retry':'Train learned subject classes';train.disabled=pending;train.title=busy?'Current pass continues. One follow-up pass uses the latest confirmed lessons.':'Train confirmed composite classes';S.classTrainingBusy=busy||queued;};
   const autoTrainLabel=document.createElement('label'),autoTrain=document.createElement('input');autoTrain.type='checkbox';autoTrain.id='autoTrainSubjectClasses';autoTrainLabel.append(autoTrain,document.createTextNode(' Train after manual Learn Subject commits'));
-  const refreshTraining=async()=>{try{const state=await j('/api/subjects/classes/status');autoTrain.checked=state.auto_train;showTrainingState(state);trainingStatus.textContent=state.classes.length?state.classes.map(c=>`${c.label}: ${c.source_images} source images${c.ready?'':' (needs 3)'}`).join(' · ')+(state.active?' · Active trained model':' · Needs two ready classes before training'):'Confirm an LLM-proposed or corrected Subject label, then Learn Subject. Three different source images per class provide two training images and one validation image.';const latest=state.runs?.[0];if(latest){let report={};try{report=JSON.parse(latest.report||'{}')}catch(_){}trainingStatus.textContent+='\nLast training: '+(latest.state==='active'?'activated':latest.state==='rejected'?'not activated — validation failed':latest.state)+(report.validation?' ('+Math.round(report.validation.accuracy*100)+'% accepted)':'');if(report.validation?.per_class)trainingStatus.textContent+='\nHeld-out results: '+Object.entries(report.validation.per_class).map(([name,value])=>name+': '+Math.round(value*100)+'%').join(' · ');if(report.error)trainingStatus.textContent+='\n'+report.error;}trainingStatus.style.whiteSpace='pre-wrap';recognize.disabled=!state.active;rollback.disabled=!state.active?.previous_revision;}catch(error){trainingStatus.textContent=error.message}};
+  const refreshTraining=async()=>{try{const state=await j('/api/subjects/classes/status');autoTrain.checked=state.auto_train;showTrainingState(state);trainingDetails.updateIncomplete(state.classes||[]);trainingStatus.textContent=state.classes.length?state.classes.map(c=>`${c.label}: ${c.source_images} source images${c.ready?'':' (needs 3)'}`).join(' · ')+(state.active?' · Active trained model':' · Needs two ready classes before training'):'Confirm an LLM-proposed or corrected Subject label, then Learn Subject. At least three source images per class; source-disjoint folds test every eligible example. Classes are admitted separately; exact labels remain separate.';const latest=state.runs?.[0];if(latest){let report={};try{report=JSON.parse(latest.report||'{}')}catch(_){}trainingStatus.textContent+='\nLast training: '+(latest.state==='active'?'activated':latest.state==='rejected'?'not activated — validation failed':latest.state)+(report.validation?' ('+Math.round(report.validation.accuracy*100)+'% overall accepted'+(report.partial_activation?'; partial class update':'')+')':'');if(report.diagnostics?.length)trainingStatus.textContent+='\n'+report.diagnostics.join('\n');else if(report.validation?.per_class)trainingStatus.textContent+='\nHeld-out results: '+Object.entries(report.validation.per_class).map(([name,value])=>name+': '+Math.round(value*100)+'%').join(' · ');if(report.error)trainingStatus.textContent+='\n'+report.error;}trainingStatus.style.whiteSpace='pre-wrap';recognize.disabled=!state.active;rollback.disabled=!state.active?.previous_revision;}catch(error){trainingStatus.textContent=error.message}};
   autoTrain.onchange=async()=>{try{await j('/api/subjects/classes/settings',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({auto_train:autoTrain.checked})})}catch(error){alert(error.message)}};
   train.onclick=async()=>{try{const job=await post('/api/subjects/classes/train',{});$('#status').textContent=job.queued_update?'Training is running; one follow-up pass queued':'Composite class training queued · '+job.id;await refreshTraining();scheduleJobsPoll(500)}catch(error){alert(error.message)}};
-  recognize.onclick=async()=>{const paths=[...S.selected];if(!paths.length)return alert('Select images with assembled subject masks first.');try{const job=await post('/api/subjects/classes/recognize',{paths});$('#status').textContent='Learned class recognition queued · '+job.id;scheduleJobsPoll(500)}catch(error){alert(error.message)}};
+  const applyRecognitionLabel=document.createElement('label'),applyRecognition=document.createElement('input');applyRecognition.type='checkbox';applyRecognition.checked=true;applyRecognitionLabel.append(applyRecognition,document.createTextNode(' Apply accepted learned labels to unidentified subjects'));
+  recognize.onclick=async()=>{const paths=[...S.selected];if(!paths.length)return alert('Select images with assembled subject masks first.');try{const job=await post('/api/subjects/classes/recognize',{paths,apply_unidentified:applyRecognition.checked});$('#status').textContent='Learned class recognition queued · '+job.id;scheduleJobsPoll(500)}catch(error){alert(error.message)}};
   rollback.onclick=async()=>{try{await post('/api/subjects/classes/rollback',{});await refreshTraining();$('#status').textContent='Previous validated class model restored'}catch(error){alert(error.message)}};
-  const refreshClassStatus=document.createElement('button');refreshClassStatus.id='refreshSubjectClassStatusBtn';refreshClassStatus.textContent='Refresh class training status';refreshClassStatus.onclick=refreshTraining;S.refreshSubjectClassStatus=refreshTraining;refreshTraining();
-  section.append(autoTrainLabel,train,recognize,rollback,refreshClassStatus,trainingStatus);
-  section.append(heading,button,detail,parser,reconstruct,parserHelp,autoLabel,qwen,qwenHelp);$('#classifyBtn')?.closest('section')?.after(section);
+  const refreshClassStatus=document.createElement('button');refreshClassStatus.id='refreshSubjectClassStatusBtn';refreshClassStatus.textContent='Refresh class training status';refreshClassStatus.onclick=refreshTraining;S.refreshSubjectClassStatus=refreshTraining;recognize.disabled=true;rollback.disabled=true;
+  const trainingDetails=createSubjectTrainingDetails({report:trainingStatus,refresh:refreshClassStatus,rollback,onOpen:refreshTraining});
+  section.append(autoTrainLabel,train,applyRecognitionLabel,recognize,trainingDetails.button,trainingDetails.reminders);
+  section.append(heading,button,detail,passLabel,yolast,namingHelp,parser,reconstruct,parserHelp,autoLabel,qwen,qwenHelp);$('#classifyBtn')?.closest('section')?.after(section);
  }
 }
 const translator=$('#promptTranslatorModel');if(translator)translator.closest('section').dataset.capability='processing';
 markEditionControls();
 
+const gridWork=createGridWorkQueue({ready:()=>!browseEverRequested||S.gridHasPainted||S._rootBrowseComplete,idle:fn=>window.requestIdleCallback?window.requestIdleCallback(fn,{timeout:1000}):setTimeout(fn,0)});
+function gridFirstPaint(){if(S.gridHasPainted)return;S.gridHasPainted=true;console.info('[N8Vision] First grid mounted · resident images='+S.files.length+' · mode='+(S.mobile?'mobile':S.desktopWindowed?'window '+S.desktopWindowSize:'full catalog'));requestAnimationFrame(()=>setTimeout(()=>gridWork.kick(),0));}
 async function init(){
  await acceptPairing();
  if(credential())await post('/api/network/media-session',{});
  applyEdition(await j('/api/edition'));
  showLiteIntroduction();
- if(S.capabilities.processing){loadRefineRecipe();loadWorkshopFunctions();}
+ // Processing shelves are initialized after the initial grid paint.
  try{const c=await j('/api/config');S.gridDetail=c.grid_detail||'hover';S.gridGapTenths=Number.isFinite(Number(c.grid_gap_tenths))?Number(c.grid_gap_tenths):1;document.documentElement.style.setProperty('--grid-gap-tenths',S.gridGapTenths);S.sanityBadges=c.sanity_badges||'compact';S.defaultRoot=c.default_root||null;S.filterPresets=c.filter_presets||{};S.thumbnailCache=c.thumbnail_cache||null;S.ringBufferRows=Math.max(1,Number(c.ringworld?.buffer_rows)||50);S.ringSouthBias=Math.max(1,Number(c.ringworld?.south_bias)||2);S.thumbWarmEnabled=c.thumbnail_warm?.enabled!==false;S.promptTranslator=c.prompt_translator||{model:'',type:'stable_diffusion',device:'default'};S.checkpointLibrary=c.checkpoint_library||null;const dot=$('#deleteOrphanThumbs');if(dot)dot.checked=S.thumbnailCache.delete_orphans_on_maintenance!==false;const rs=c.sanity||{};S.uncappedUnsanity=!!rs.uncapped_unsanity;[['#rasterThumb','thumbnail'],['#rasterThreshold','edge_threshold'],['#rasterLight','light_blur'],['#rasterMedium','medium_blur'],['#rasterHeavy','heavy_blur'],['#rasterGradeB','grade_b_largest_fraction']].forEach(([sel,key])=>{const el=$(sel);if(el&&rs[key]!==undefined)el.value=rs[key]});document.body.dataset.gridDetail=S.gridDetail;refreshPresetSelect();updateDefaultRootLabel();updateThumbnailCacheLabel()}catch(e){}
  // Restore an in-place server restart before falling back to the saved default scope.
  let restartState=null;try{restartState=JSON.parse(sessionStorage.getItem('n8vision.restartState')||'null');sessionStorage.removeItem('n8vision.restartState')}catch(e){}
  if(restartState?.recursive!==undefined)$('#recursive').checked=!!restartState.recursive;
  const restartRoot=restartState?.scopeRoot||restartState?.path;
  const startupBrowse=(!browseEverRequested&&restartRoot)?load(restartRoot,true,'startup/restart').then(()=>{if(restartState?.path&&pathInsideScope(restartState.path)&&canonPath(restartState.path)!==canonPath(S.path))focusCatalog(restartState.path,false,'restart-restore')}):((!browseEverRequested&&S.defaultRoot)?load(S.defaultRoot,true,'startup/default-root'):Promise.resolve());
- // Restore persistent archive roots immediately, independently of slower model discovery.
- const archiveRootsReady=refreshArchiveRoots();
- const volumesReady=j('/api/roots').then(rr=>{
-  $('#roots').innerHTML=rr.roots.map(x=>`<div class="root" data-p="${esc(x)}">${esc(x)}</div>`).join('');
-  document.querySelectorAll('.root').forEach(x=>x.onclick=()=>browseOnly(x.dataset.p,'volume-browse'));
- }).catch(e=>console.warn('Volume list unavailable at startup',e));
- await Promise.allSettled([archiveRootsReady,volumesReady,refreshHealth(),refreshModels(true),refreshDiscovered(),startupBrowse]);
- if(S.capabilities.inference)scheduleJobsPoll(1000)
+ // Initial images get the network/DOM/DB ahead of optional menu discovery.
+ gridWork.enqueue('startup-menus',async()=>{
+  if(S.capabilities.processing){loadRefineRecipe();loadWorkshopFunctions();}
+  S.refreshSubjectClassStatus?.();
+  const archiveRootsReady=refreshArchiveRoots();
+  const volumesReady=j('/api/roots').then(rr=>{
+   $('#roots').innerHTML=rr.roots.map(x=>`<div class="root" data-p="${esc(x)}">${esc(x)}</div>`).join('');
+   document.querySelectorAll('.root').forEach(x=>x.onclick=()=>browseOnly(x.dataset.p,'volume-browse'));
+  }).catch(e=>console.warn('Volume list unavailable at startup',e));
+  await Promise.allSettled([archiveRootsReady,volumesReady,refreshHealth(),refreshModels(true),refreshDiscovered()]);
+  if(S.capabilities.inference)scheduleJobsPoll(1000);
+ });
+ await startupBrowse;
+ gridWork.kick();
 }
 async function refreshHealth(){const h=await j('/api/health'),a=h.hardware?.accelerator||{};const hw=a.available?`<b>Accelerator:</b> ${esc(a.name||a.kind)} · ${esc(String(a.vram_gb??'?'))} GB · CUDA ${esc(String(a.cuda_build||'?'))}`:`<b>Accelerator:</b> CPU fallback${a.reason?`<br><span class="tiny">${esc(a.reason)}</span>`:''}`;$('#mvStatus').innerHTML=hw+'<br><br>'+h.providers.map(p=>`${p.installed?'✓':'○'} ${esc(p.name)}<br><span class="tiny">${esc(p.detail)}</span>`).join('<br>')}
 async function refreshArchiveRoots(){
@@ -148,7 +165,7 @@ function restoreRootCatalog(entry){
  render();$('#status').textContent=`Browsing cached catalog · ${S.files.length.toLocaleString()} known files`;
 }
 async function switchArchiveRoot(path){
- if(S.mobile){$('#recursive').checked=true;return load(path,true,'mobile-archive-root')}
+ if(pagedBrowse()){$('#recursive').checked=true;return load(path,true,'paged-archive-root')}
  const key=rootCatalogKey(path,true),entry=rootCatalogs.get(key);
  if(!entry){$('#recursive').checked=true;return load(path,true,'archive-root')}
  rememberRootCatalog();restoreRootCatalog(entry);
@@ -234,10 +251,36 @@ function immediateCatalogDirs(path){
  }
  return [...seen.values()].sort((a,b)=>a.name.localeCompare(b.name,undefined,{sensitivity:'base'}))
 }
-function renderScopeFolders(){const box=$('#folders');if(!box)return;const root=String(S.scopeRoot||S.path||'').replace(/[\\/]+$/,''),cr=canonPath(root),dirs=new Map();for(const d of(S.scopeRootDirs||[]))dirs.set(canonPath(d.path),d.path);for(const f of(S.files||[])){let dir=String(f.path||'').replace(/\//g,'\\').replace(/\\[^\\]+$/,'');while(dir&&canonPath(dir)!==cr&&canonPath(dir).startsWith(cr+'\\')){dirs.set(canonPath(dir),dir);const up=dir.replace(/\\[^\\]+$/,'');if(up===dir)break;dir=up;}}const rows=[...dirs.values()].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));box.innerHTML=rows.map(path=>{const rel=path.slice(root.length).replace(/^\\+/,''),depth=rel?rel.split('\\').length-1:0,name=path.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||path;return `<div class="folder" data-p="${esc(path)}" style="padding-left:${5+depth*14}px" title="${esc(path)}">${esc(name)}</div>`}).join('');bindFolderScopes()}
+let folderMenuIndex=null,folderMenuVersion=0;
+function renderScopeFolders(){if(S._rootBrowseComplete)folderMenuIndex=null;const version=++folderMenuVersion;gridWork.enqueue('folder-menu',()=>buildScopeFolderMenu(version));}
+async function buildScopeFolderMenu(version){
+ const box=$('#folders');if(!box)return;
+ const root=String(S.scopeRoot||S.path||'').replace(/[\\/]+$/,''),cr=canonPath(root),files=S.files;
+ if(!folderMenuIndex||folderMenuIndex.root!==cr||folderMenuIndex.files!==files||folderMenuIndex.scanned>files.length)folderMenuIndex={root:cr,files,scanned:0,dirs:new Map()};
+ const index=folderMenuIndex;
+ const current=()=>version===folderMenuVersion&&index===folderMenuIndex&&files===S.files&&canonPath(S.scopeRoot||S.path||'')===cr;
+ const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
+ for(const d of S.scopeRootDirs||[])index.dirs.set(canonPath(d.path),d.path);
+ let slice=performance.now();
+ while(index.scanned<files.length){
+  let dir=String(files[index.scanned++].path||'').replace(/\//g,'\\').replace(/\\[^\\]+$/,'');
+  while(dir&&canonPath(dir)!==cr&&canonPath(dir).startsWith(cr+'\\')){index.dirs.set(canonPath(dir),dir);const up=dir.replace(/\\[^\\]+$/,'');if(up===dir)break;dir=up;}
+  if(performance.now()-slice>6){await yieldUI();if(!current())return;slice=performance.now();}
+ }
+ if(!current())return;
+ const rows=[...index.dirs.values()].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
+ const fragment=document.createDocumentFragment();
+ for(let i=0;i<rows.length;i++){
+  const path=rows[i],rel=path.slice(root.length).replace(/^\\+/,''),depth=rel?rel.split('\\').length-1:0,name=path.replace(/[\\/]+$/,'').split(/[\\/]/).pop()||path;
+  const node=document.createElement('div');node.className='folder';node.dataset.p=path;node.style.paddingLeft=(5+depth*14)+'px';node.title=path;node.textContent=name;fragment.append(node);
+  if(i%100===99){await yieldUI();if(!current())return;}
+ }
+ if(!current())return;box.replaceChildren(fragment);bindFolderScopes();
+}
+
 function renderFolderSelection(){document.querySelectorAll('#folders .folder').forEach(x=>x.classList.toggle('scopeSelected',S.scopeSelections.has(canonPath(x.dataset.p))))}
 function bindFolderScopes(){const rows=[...document.querySelectorAll('#folders .folder')];rows.forEach((x,i)=>x.onclick=e=>{e.preventDefault();e.stopPropagation();const key=canonPath(x.dataset.p),multi=e.ctrlKey||e.metaKey||S.softCtrl,range=e.shiftKey||S.softShift;if(range&&S.scopeSelectionAnchor!==null){const a=Math.min(S.scopeSelectionAnchor,i),b=Math.max(S.scopeSelectionAnchor,i);if(!multi)S.scopeSelections.clear();for(let n=a;n<=b;n++)S.scopeSelections.add(canonPath(rows[n].dataset.p));}else if(multi){if(S.scopeSelections.has(key))S.scopeSelections.delete(key);else S.scopeSelections.add(key);S.scopeSelectionAnchor=i;}else{S.scopeSelections.clear();S.scopeSelections.add(key);S.scopeSelectionAnchor=i;}renderFolderSelection();render();$('#status').textContent=`Graph bounded by ${S.scopeSelections.size} folder${S.scopeSelections.size===1?'':'s'} · ${visibleFiles().length.toLocaleString()} shown`;});renderFolderSelection()}
-function focusCatalog(path,commit=false,reason='catalog-focus'){if(S.mobile)return false;gridActivity('catalog-focus');
+function focusCatalog(path,commit=false,reason='catalog-focus'){if(pagedBrowse())return false;gridActivity('catalog-focus');
  if(!pathInsideScope(path))return false;
  const p=String(path).replace(/[\\\/]+$/,'');S.selected.clear();S.semantic=null;S.compare=null;S.path=p;
  const cp=canonPath(p),cr=canonPath(S.scopeRoot);S.parent=cp===cr?null:p.replace(/[\\\/][^\\\/]+$/,'');
@@ -248,12 +291,12 @@ function focusCatalog(path,commit=false,reason='catalog-focus'){if(S.mobile)retu
  console.info(`[N8Vision] Catalog focus · reason=${reason} · ${p} · no filesystem browse`);return true
 }
 function navigateTo(path,commit=false,reason='ui/navigation'){
- if(!S.mobile&&pathInsideScope(path))return Promise.resolve(focusCatalog(path,commit,reason));
+ if(!pagedBrowse()&&pathInsideScope(path))return Promise.resolve(focusCatalog(path,commit,reason));
  return browseOnly(path,reason)
 }
 
 async function load(path,commit=false,reason='ui/navigation'){rememberRootCatalog();gridActivity('filesystem-browse');
- const previousMobileTx=S.mobileBrowseTx||'';if(S.mobile){mobilePager?.close();mobilePager=null;rootCatalogs.clear();S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;}
+ const previousMobileTx=S.mobileBrowseTx||'';if(pagedBrowse()||mobilePager){mobilePager?.close();mobilePager=null;rootCatalogs.clear();S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;}
  browseEverRequested=true;
  const generation=browseGeneration+1,tx=browseTx();
  console.info(`[N8Vision] Browse request · tx=${tx} · reason=${reason} · path=${path} · recursive=${$('#recursive').checked}`);
@@ -261,27 +304,37 @@ async function load(path,commit=false,reason='ui/navigation'){rememberRootCatalo
  const controller=new AbortController();browseController=controller;startBrowseHeartbeat(tx);
  $('#status').textContent='Opening location…';
  let d;
- try{d=await j(`/api/browse/start?path=${enc(path)}&recursive=${$('#recursive').checked}&tx=${enc(tx)}${S.mobile?'&mobile=true&previous_tx='+enc(previousMobileTx):''}`,{signal:controller.signal})}
- catch(e){if(e?.name==='AbortError')return;if(generation===browseGeneration){$('#status').textContent=`Browse failed — keeping ${S.path||'current location'}`;console.warn('Browse failed; navigation state preserved',path,e);stopBrowseHeartbeat()}return}
+ try{d=await j(`/api/browse/start?path=${enc(path)}&recursive=${$('#recursive').checked}&tx=${enc(tx)}${S.mobile?'&mobile=true':S.desktopWindowed?'&windowed=true':''}&previous_tx=${enc(previousMobileTx)}`,{signal:controller.signal})}
+ catch(e){if(e?.name==='AbortError')return;if(generation===browseGeneration){$('#status').textContent=`Browse failed — keeping ${S.path||'current location'}`;console.warn('Browse failed; navigation state preserved',path,e);stopBrowseHeartbeat();S._rootBrowseComplete=true;gridWork.kick()}return}
  if(generation!==browseGeneration)return;
  if(d.browse_tx!==tx){console.warn('Discarded mismatched browse transaction',d.browse_tx,tx);return}
  // Commit the location when the bounded start packet arrives. Files then arrive as 500-file bites.
- S._rootBrowseComplete=false;S.selected.clear();S.semantic=null;S.compare=null;S.path=d.path;S.parent=d.parent;S.files=[];S.dirs=d.directories||[];S.virtualGrid.rowReady=new Map();S.virtualGrid.prepGeneration++;S.virtualGrid.archiveWarmCursor=0;S.virtualGrid.scoutDir=0;S.virtualGrid.scoutExtra=0;S.virtualGrid.scoutLastMove=0;if(S.virtualGrid.scoutDecayTimer){clearTimeout(S.virtualGrid.scoutDecayTimer);S.virtualGrid.scoutDecayTimer=0;}if(S.virtualGrid.archiveWarmTimer){(window.cancelIdleCallback||clearTimeout)(S.virtualGrid.archiveWarmTimer);S.virtualGrid.archiveWarmTimer=0;}
+ S.gridHasPainted=false;S._rootBrowseComplete=false;S.selectionRequest=(S.selectionRequest||0)+1;S.selected.clear();S.selectionAnchor=null;S.selectionAnchorMeta=null;S.semantic=null;S.compare=null;S.path=d.path;S.parent=d.parent;S.files=[];S.dirs=d.directories||[];S.virtualGrid.rowReady=new Map();S.virtualGrid.prepGeneration++;S.virtualGrid.archiveWarmCursor=0;S.virtualGrid.scoutDir=0;S.virtualGrid.scoutExtra=0;S.virtualGrid.scoutLastMove=0;if(S.virtualGrid.scoutDecayTimer){clearTimeout(S.virtualGrid.scoutDecayTimer);S.virtualGrid.scoutDecayTimer=0;}if(S.virtualGrid.archiveWarmTimer){(window.cancelIdleCallback||clearTimeout)(S.virtualGrid.archiveWarmTimer);S.virtualGrid.archiveWarmTimer=0;}
  S.scopeRoot=d.path;S.catalogRecursive=!!d.recursive;S.scopeRecursive=!!$('#recursive').checked;S.scopeRootDirs=(d.directories||[]).slice();S.scopeSelections.clear();S.scopeSelectionAnchor=null;
  $('#path').value=S.path;renderScopeFolders();setTree(S.treeOpen);updateScanButton();renderArchiveRoots();
  const grid=$('#grid');if(grid)grid.scrollTop=0;render();
  requestAnimationFrame(()=>{if(generation===browseGeneration)paintRing()});
- if(S.mobile){
+ if(pagedBrowse()){
+  $('#mobilePagingInfo').hidden=false;
   const pager=new MobileArchiveWindow(async index=>{
    const packet=await j(`/api/browse/chunk?tx=${enc(tx)}&index=${index}`,{signal:controller.signal});
    if(packet.browse_tx!==tx)throw new Error('Browse transaction changed');return packet;
-  });mobilePager=pager;S.mobileBrowseTx=tx;
+  },{windowSize:S.mobile?1500:S.desktopWindowSize,fixedWindow:!S.mobile});mobilePager=pager;S.mobileBrowseTx=tx;
   try{
-   const snapshot=await pager.focus(0);if(!snapshot||generation!==browseGeneration||mobilePager!==pager)return;
-   await applyMobileSnapshot(snapshot,null,pager);
-   S._rootBrowseComplete=true;$('#status').textContent='Mobile archive ready';
+   const position=S.windowRestorePosition||0;S.windowRestorePosition=0;const snapshot=await (S.mobile?pager.focus(position):pager.initial(position));if(!snapshot||generation!==browseGeneration||mobilePager!==pager)return;
+   await applyMobileSnapshot(snapshot,S.windowRestoreAnchor||null,pager);S.windowRestoreAnchor=null;
+   // First 500 are mounted before filling the configured desktop metadata zone.
+   if(!S.mobile){
+    await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+    if(generation!==browseGeneration||mobilePager!==pager)return;
+    const expanded=await pager.focus(position);
+    if(generation!==browseGeneration||mobilePager!==pager)return;
+    if(expanded?.changed){const anchor=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f?.path;await applyMobileSnapshot(expanded,anchor,pager)}
+   }
+
+   S._rootBrowseComplete=true;gridWork.kick();$('#status').textContent=S.mobile?'Mobile archive ready':'Windowed archive ready';
    const stable=await signalBrowseStable(tx);if(stable)stopBrowseHeartbeat();
-  }catch(e){if(e.name!=='AbortError'){$('#status').textContent='Mobile browse failed: '+e.message;console.warn(e)}stopBrowseHeartbeat()}
+  }catch(e){if(e.name!=='AbortError'){$('#status').textContent='Mobile browse failed: '+e.message;console.warn(e)}stopBrowseHeartbeat();if(generation===browseGeneration){S._rootBrowseComplete=true;gridWork.kick()}}
   return;
  }
  let index=0,complete=false;
@@ -290,42 +343,47 @@ async function load(path,commit=false,reason='ui/navigation'){rememberRootCatalo
    const packet=await j(`/api/browse/chunk?tx=${enc(tx)}&index=${index}`,{signal:controller.signal});
    if(generation!==browseGeneration)return;if(packet.browse_tx!==tx)continue;
    if(packet.error)throw new Error(`Browse preparation failed: ${packet.error}`);
-   if(packet.files?.length){S.files.push(...packet.files);index++;renderScopeFolders();render();if(index===1)requestAnimationFrame(()=>paintRing());}
+   if(packet.files?.length){S.files.push(...packet.files);index++;render();renderScopeFolders();if(index===1)requestAnimationFrame(()=>paintRing());await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));if(generation!==browseGeneration)return;}
    complete=!!packet.complete;
    if(complete)noticeCursors.set(rootCatalogKey(S.scopeRoot,S.catalogRecursive),{cursor:packet.notice_cursor,epoch:packet.notice_epoch});
    $('#status').textContent=complete?`Loaded ${S.files.length.toLocaleString()}`:`Loading… ${S.files.length.toLocaleString()} prepared`;
   }
- }catch(e){if(e?.name==='AbortError')return;if(generation===browseGeneration){$('#status').textContent=`Browse interrupted at ${S.files.length.toLocaleString()} files`;console.warn('Chunk browse interrupted',e);stopBrowseHeartbeat()}return}
+ }catch(e){if(e?.name==='AbortError')return;if(generation===browseGeneration){$('#status').textContent=`Browse interrupted at ${S.files.length.toLocaleString()} files`;console.warn('Chunk browse interrupted',e);stopBrowseHeartbeat();S._rootBrowseComplete=true;gridWork.kick()}return}
  finally{if(generation===browseGeneration&&browseController===controller)browseController=null}
  if(generation!==browseGeneration)return;
- warmArchiveTail();S._rootBrowseComplete=true;$('#status').textContent='Ready';rootCatalogs.set(rootCatalogKey(S.scopeRoot,S.catalogRecursive),{path:S.scopeRoot,parent:S.parent,files:S.files,dirs:S.scopeRootDirs,recursive:S.catalogRecursive});console.info(`[N8Vision] Chunk browse complete · tx=${tx} · files=${S.files.length} · bites=${index}`);
+ warmArchiveTail();S._rootBrowseComplete=true;gridWork.kick();$('#status').textContent='Ready';rootCatalogs.set(rootCatalogKey(S.scopeRoot,S.catalogRecursive),{path:S.scopeRoot,parent:S.parent,files:S.files,dirs:S.scopeRootDirs,recursive:S.catalogRecursive});console.info(`[N8Vision] Chunk browse complete · tx=${tx} · files=${S.files.length} · bites=${index}`);
  const stable=await signalBrowseStable(tx);if(stable)stopBrowseHeartbeat();if(generation!==browseGeneration)return;if(stable)startQuality()
 }
 function matchedObservation(f,q,min){if(!q)return true;return(f.observations||[]).some(o=>conceptKey(o.concept).includes(conceptKey(q))&&o.confidence>=min)}
 function isSubjectObservation(o){if(!o)return false;let g=o.geometry;try{g=typeof g==='string'?JSON.parse(g):g}catch(_){g=null}if(o.subject_role===false||g?.subject_role===false)return false;return !!(o.subject_role||g?.subject_role||g?.subject_pipeline||o.provider==='subject-intelligence')}
+// Derived archive state, never a detector badge or a training confirmation.
+function isSubjectified(f){const subjects=(f.observations||[]).filter(o=>Number(o.confidence)>0&&isSubjectObservation(o));return subjects.length>0&&subjects.every(o=>{const label=String(o.concept||'').trim().toLowerCase();let g=o.geometry;try{g=typeof g==='string'?JSON.parse(g):g}catch(_){g=null}return !!label&&!['unknown','unidentified','unidentified subject'].includes(label)&&g?.instance_separation!=='unresolved'&&!(Number(g?.separation_conflict_pixels)>0)})}
+const subjectifiedFeature={concept:'subjectified',provider:'archive-status',model:'subjectified',kind:'status'};
+function subjectificationTargets(){const filter=[...S.magnets.values()].find(m=>m.key==='archive-status\u001fsubjectified');return S.files.filter(f=>S.selected.has(f.path)&&(!filter||filter.mode==='0'||(filter.mode==='-'?!isSubjectified(f):compareCount(isSubjectified(f)?1:0,filter.op,filter.count)))).map(f=>f.path)}
+function recognitionNote(o){const r=geometryOf(o)?.trained_class_review;return !r?'':r.accepted?(r.label===o.concept?' · learned':' → '+r.label+' (learned draft)'):' · learned: uncertain'}
 function observationLabel(o){const label=String(o?.concept||'');return isSubjectObservation(o)?'Subject — '+(label.toLowerCase()==='unidentified subject'?'Unidentified':label):label}
 function subjectSeparationNote(o){let g=o?.geometry;try{g=typeof g==='string'?JSON.parse(g):g}catch(_){return ''}if(g?.instance_separation==='unresolved')return 'Split unresolved — review mask';if(Number(g?.separation_conflict_pixels)>0)return 'Split masks still overlap — review';if(g?.instance_separation==='sam')return 'YOLAST + SAM split (draft)';return ''}
 function observationConfidence(o){let g=o?.geometry;try{g=typeof g==='string'?JSON.parse(g):g}catch(_){g=null}return isSubjectObservation(o)&&g?.name_accepted&&Number.isFinite(Number(g.name_confidence))?Number(g.name_confidence):Number(o?.confidence)||0}
 const conceptPlurals={hands:'hand',feet:'foot',arms:'arm',legs:'leg',eyes:'eye',ears:'ear',fingers:'finger',toes:'toe',heads:'head',faces:'face',women:'woman',men:'man',people:'person'};
 function conceptKey(value){const key=String(value||'').toLowerCase().trim().replace(/\s+/g,' ');return conceptPlurals[key]||key}
-function obsKey(o){return (o.kind==='quality'||(conceptKey(o.concept)==='quality'&&String(o.provider).startsWith('yuan-iqf')))||String(o.provider).startsWith('native-raster-sanity')?`${o.provider}\u001f${o.model}\u001f${conceptKey(o.concept)}`:`feature\u001f${conceptKey(o.concept)}`}
+function obsKey(o){if(o.provider==='archive-status'&&o.model==='subjectified')return 'archive-status\u001fsubjectified';return (o.kind==='quality'||(conceptKey(o.concept)==='quality'&&String(o.provider).startsWith('yuan-iqf')))||String(o.provider).startsWith('native-raster-sanity')?`${o.provider}\u001f${o.model}\u001f${conceptKey(o.concept)}`:`feature\u001f${conceptKey(o.concept)}`}
 function observationGroups(f,splitSubjects=false){const m=new Map();for(const o of(f.observations||[])){if(o.kind==='receipt'||o.confidence<=0)continue;const k=obsKey(o)+(splitSubjects&&isSubjectObservation(o)?"\u001fsubject":""),g=m.get(k)||{key:k,subject_role:isSubjectObservation(o),concept:conceptKey(o.concept),provider:o.provider,model:o.model,count:0,confidence:0,items:[]};if(o.kind==='bbox'||o.kind==='mask'){if(!o.presentation_hidden)g.count++}else g.nonlocalized=true;const confidence=splitSubjects?observationConfidence(o):Number(o.confidence)||0;if(confidence>=g.confidence){g.provider=o.provider;g.model=o.model;g.confidence=confidence}g.items.push(o);m.set(k,g)}for(const g of m.values())if(!g.count&&g.nonlocalized)g.count=1;return m}
 function observationAttribution(g){return [...new Set((g.items||[g]).map(o=>`${o.provider} · ${o.model} (${o.concept})`))].join('\n')}
-function groupedDiscovered(){const groups=new Map();for(const t of S.discovered){const key=obsKey(t),g=groups.get(key)||{...t,key,concept:conceptKey(t.concept),items:[]};g.items.push(t);groups.set(key,g)}return [...groups.values()]}
+function groupedDiscovered(){const groups=new Map();for(const t of S.discovered){const key=obsKey(t),g=groups.get(key)||{...t,key,concept:conceptKey(t.concept),items:[]};g.items.push(t);groups.set(key,g)}const statusKey=obsKey(subjectifiedFeature);groups.set(statusKey,{...subjectifiedFeature,key:statusKey,items:[subjectifiedFeature]});return [...groups.values()]}
 function compareCount(n,op,v){if(v===''||v===null||v===undefined)return n>0;v=Number(v);if(!Number.isFinite(v))return n>0;return op==='='?n===v:op==='≠'?n!==v:op==='<'?n<v:op==='≤'?n<=v:op==='>'?n>v:n>=v}
 function passesMagnets(f){
- const groups=observationGroups(f),active=[...S.magnets.values()].filter(m=>m.mode!=='0');
+ const active=[...S.magnets.values()].filter(m=>m.mode!=='0');if(!active.length)return true;const groups=active.every(m=>m.key==='archive-status\u001fsubjectified')?new Map():observationGroups(f);
  // Sanity failure modes are mutually exclusive by design. Multiple positive Sanity magnets therefore mean
  // "show any of these failures", while all unrelated magnets retain the refrigerator's normal AND semantics.
  const sanityWanted=active.filter(m=>m.mode==='+'&&[...groups.values(),...[]]!==null&&String(m.key).startsWith('native-raster-sanity\u001f'));
  if(sanityWanted.length){
   let any=false;
-  for(const m of sanityWanted){const g=groups.get(m.key),n=g?g.count:0;if(compareCount(n,m.op,m.count)){any=true;break}}
+  for(const m of sanityWanted){const g=groups.get(m.key),n=m.key==='archive-status\u001fsubjectified'?(isSubjectified(f)?1:0):(g?g.count:0);if(compareCount(n,m.op,m.count)){any=true;break}}
   if(!any)return false;
  }
  for(const m of active){
   if(sanityWanted.includes(m))continue;
-  const g=groups.get(m.key),n=g?g.count:0;
+  const g=groups.get(m.key),n=m.key==='archive-status\u001fsubjectified'?(isSubjectified(f)?1:0):(g?g.count:0);
   if(m.mode==='-'&&n>0)return false;
   if(m.mode==='+'&&!compareCount(n,m.op,m.count))return false;
  }
@@ -333,7 +391,11 @@ function passesMagnets(f){
 }
 function fileQuality(f){const s=qualityScore(f);return s===''?null:Number(s)}
 function applySort(fs){
- if(S.sortKey==='none')return fs;
+ if(S.sortKey==='none'){
+  // Comparison tools may filter membership, but Filesystem restores catalog order.
+  if(S.semantic||S.compare){const position=new Map(S.files.map((f,i)=>[f.path,i]));fs=[...fs].sort((a,b)=>(position.get(a.path)??Infinity)-(position.get(b.path)??Infinity))}
+  return S.sortDir==='desc'?[...fs].reverse():fs;
+ }
  const dir=S.sortDir==='asc'?1:-1;
  const scores=new Map((S.compare?.results||[]).map(x=>[x.path,Number(x.score)]));
  const val=f=>{
@@ -362,7 +424,17 @@ function geometrySvg(f){if(!S.boxes&&!S.masks)return'';const items=(f.observatio
 function syncGeometryViews(){document.querySelectorAll('.thumb').forEach(t=>{const img=t.querySelector('img'),svg=t.querySelector('svg');if(!img||!svg||svg.hasAttribute('viewBox'))return;const full=new Image();full.onload=()=>{if(full.naturalWidth&&full.naturalHeight)svg.setAttribute('viewBox',`0 0 ${full.naturalWidth} ${full.naturalHeight}`)};const card=t.closest('.card');if(card)full.src=`/api/file?path=${enc(card.dataset.p)}`})}
 function viewerGeometry(f){const oldB=S.boxes,oldM=S.masks;S.boxes=true;S.masks=true;const out=geometrySvg(f);S.boxes=oldB;S.masks=oldM;return out}
 function viewerObsId(o,i){return `obs-${i}`}
-async function refreshOne(path){const r=await post('/api/observations',{paths:[path]});const f=S.files.find(x=>x.path===path);if(f){f.observations=(r.observations||{})[path]||[];if(S.mobile)mobilePager?.remember(f);}S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(!S.viewer)render();return f}
+async function synchronizeRecognitionPaths(paths){
+ const unique=[...new Set(paths)];
+ for(let start=0;start<unique.length;start+=100){const r=await post('/api/observations',{paths:unique.slice(start,start+100)});syncRecognitionMetadata(r.observations||{},{files:S.files,catalogs:rootCatalogs.values(),pager:mobilePager});}
+ if(!S.viewer)paintObservationMetadata();
+}
+function paintObservationMetadata(){
+ const files=new Map(S.files.map(f=>[f.path,f]));
+ for(const entry of S.virtualGrid?.rowReady?.values()||[])for(const card of entry.node?.querySelectorAll('.card')||[]){const f=files.get(card.dataset.p);if(!f)continue;const box=card.querySelector('.badges');if(box)box.innerHTML=badges(f)}
+ refreshSelectionUI();
+}
+async function refreshOne(path){const r=await post('/api/observations',{paths:[path]});const f=S.files.find(x=>x.path===path);if(f){f.observations=(r.observations||{})[path]||[];if(pagedBrowse())mobilePager?.remember(f);}S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(!S.viewer)render();return f}
 function editableObservations(f){return(f.observations||[]).filter(o=>o.kind!=='receipt'&&o.confidence>0&&(o.kind==='bbox'||o.kind==='mask'))}
 
 function maskRleEncode(mask){const out=[];for(let i=0;i<mask.length;){if(!mask[i]){i++;continue}const s=i;while(i<mask.length&&mask[i])i++;out.push(s,i-s)}return out}
@@ -502,7 +574,7 @@ function acceptTaughtBox(observations,geometries,taught,geometry){
 const inspectorSources=new Map();
 function openViewer(path,{selectBox=null,selectConcept=null}={}){observationRefreshController?.abort();for(const e of thumbAssets.values())if(e.state==='loading')e.controller?.abort();gridActivity('inspector-open');const f=S.files.find(x=>x.path===path);if(!f)return;S.viewer=path;let v=$('#imageViewer');if(!v){v=document.createElement('div');v.id='imageViewer';v.className='imageViewer';document.body.appendChild(v)}
  v._maskDispose?.();v._maskDispose=null;v._inspectionCamera?.dispose();v._maskCamera?.dispose();
- const obs=editableObservations(f),geometries=obs.map(geometryOf);v.innerHTML=`<div class="viewerBackdrop"></div><div class="viewerPanel teachViewer" role="dialog" aria-modal="true"><div class="viewerDisplayTools"><button id="viewerStretchBtn" title="Use the available inspection workspace">Stretch</button><button id="viewerCleanBtn" title="Source pixels only; press again to restore the dirt">Clean</button><button id="viewerPrevBtn" title="Previous Multi-Work image">‹</button><button id="viewerNextBtn" title="Next Multi-Work image">›</button></div><button class="viewerClose">×</button><div class="viewerWork"><div class="viewerStage"><div class="viewerImageFrame"><img class="viewerSource" fetchpriority="high" decoding="async"><img class="viewerSavedMasks" alt=""><svg class="teachOverlay" preserveAspectRatio="none"></svg></div></div><aside class="visionTeach"><h3>Correct / Teach</h3><div class="muted">Select a detection to reject or relabel it. Teach a new thing by drawing a box or using the entire image.</div><div class="subhead">Detections</div><div class="teachObs">${obs.map((o,i)=>`<button data-oi="${i}" title="${esc(o.provider)} · ${esc(o.model)}">${esc(observationLabel(o))} · ${Math.round(observationConfidence(o)*100)}% <small>(${esc(modelShortName(o.model))})</small></button>`).join('')||'<span class="tiny">No box/mask detections.</span>'}</div><div id="teachSelected" class="tiny">No detection selected.</div><div class="buttonGrid"><button id="rejectObsBtn" disabled>Sorry, that isn't that</button><button id="relabelObsBtn" disabled>That's actually…</button></div><div class="buttonGrid"><button id="confirmLMClassBtn" disabled>Use language-model class</button><button id="confirmLearnedClassBtn" disabled>Use learned class</button><button id="learnSubjectBtn" disabled>Learn Subject</button><button id="addSubjectPartBtn" disabled>Add part to subject</button></div><div id="subjectLearningStatus" class="tiny"></div><hr><input id="teachConcept" list="teachConceptList" placeholder="type or choose visual concept" autocomplete="off"><datalist id="teachConceptList">${S.discovered.map(x=>`<option value="${esc(x.concept||x)}"></option>`).join('')}</datalist><div class="teachGroundButtons"><button id="teachWholeBtn" title="Record image-level evidence instead of a localized box.">Entire Image</button><button id="paintMaskBtn" title="Paint a binary mask. Uses the selected box as its crop, or edits a selected mask.">Paint Mask</button><button data-capability="inference" id="samMaskBtn" title="Ask SAM for a first-draft mask from the selected box, then edit it here.">SAM Mask</button></div><div id="teachHint" class="tiny" title="Typing or choosing a concept switches the image into bounding mode. Drag directly over the image to teach an instance.">Choose a concept to enter bounding mode.</div></aside></div><div class="viewerCaption">${esc(f.name)}<input class="inspectorPath" aria-label="Absolute image path" readonly value="${esc(path)}" style="display:block;width:100%;user-select:text" onclick="this.select()"></div></div>`;v.classList.add('open');installViewerDisplayControls(v,path);
+ const obs=editableObservations(f),geometries=obs.map(geometryOf);v.innerHTML=`<div class="viewerBackdrop"></div><div class="viewerPanel teachViewer" role="dialog" aria-modal="true"><div class="viewerDisplayTools"><button id="viewerStretchBtn" title="Use the available inspection workspace">Stretch</button><button id="viewerCleanBtn" title="Source pixels only; press again to restore the dirt">Clean</button><button id="viewerPrevBtn" title="Previous Multi-Work image">‹</button><button id="viewerNextBtn" title="Next Multi-Work image">›</button></div><button class="viewerClose">×</button><div class="viewerWork"><div class="viewerStage"><div class="viewerImageFrame"><img class="viewerSource" fetchpriority="high" decoding="async"><img class="viewerSavedMasks" alt=""><svg class="teachOverlay" preserveAspectRatio="none"></svg></div></div><aside class="visionTeach"><h3>Correct / Teach</h3><div class="muted">Select a detection to reject or relabel it. Teach a new thing by drawing a box or using the entire image.</div><div class="subhead">Detections</div><div class="teachObs">${obs.map((o,i)=>`<button data-oi="${i}" title="${esc(o.provider)} · ${esc(o.model)}">${esc(observationLabel(o))}${esc(recognitionNote(o))} · ${Math.round(observationConfidence(o)*100)}% <small>(${esc(modelShortName(o.model))})</small></button>`).join('')||'<span class="tiny">No box/mask detections.</span>'}</div><div id="teachSelected" class="tiny">No detection selected.</div><div class="buttonGrid"><button id="rejectObsBtn" disabled>Sorry, that isn't that</button><button id="relabelObsBtn" disabled>That's actually…</button></div><div class="buttonGrid"><button id="confirmLMClassBtn" disabled>Use language-model class</button><button id="confirmLearnedClassBtn" disabled>Use learned class</button><button id="learnSubjectBtn" disabled>Learn Subject</button><button id="addSubjectPartBtn" disabled>Add part to subject</button><button id="guidedSubjectSplitBtn" disabled>Split into multiple subjects…</button></div><div id="subjectLearningStatus" class="tiny"></div><hr><input id="teachConcept" list="teachConceptList" placeholder="type or choose visual concept" autocomplete="off"><datalist id="teachConceptList">${S.discovered.map(x=>`<option value="${esc(x.concept||x)}"></option>`).join('')}</datalist><div class="teachGroundButtons"><button id="teachWholeBtn" title="Record image-level evidence instead of a localized box.">Entire Image</button><button id="paintMaskBtn" title="Paint a binary mask. Uses the selected box as its crop, or edits a selected mask.">Paint Mask</button><button data-capability="inference" id="samMaskBtn" title="Ask SAM for a first-draft mask from the selected box, then edit it here.">SAM Mask</button></div><div id="teachHint" class="tiny" title="Typing or choosing a concept switches the image into bounding mode. Drag directly over the image to teach an instance.">Choose a concept to enter bounding mode.</div></aside></div><div class="viewerCaption">${esc(f.name)}<input class="inspectorPath" aria-label="Absolute image path" readonly value="${esc(path)}" style="display:block;width:100%;user-select:text" onclick="this.select()"></div></div>`;v.classList.add('open');installViewerDisplayControls(v,path);
  v._maskResize?.disconnect();
  const sourceKey=path+'|'+(f.mtime||0)+'|'+(S.gridRedrawEpoch||0);
  let img=v.querySelector('.viewerSource');
@@ -520,18 +592,31 @@ function openViewer(path,{selectBox=null,selectConcept=null}={}){observationRefr
  function sourceReady(){drawExisting();const overlay=v.querySelector('.viewerSavedMasks');if(overlay&&obs.some(o=>o.kind==='mask')){overlay.fetchPriority='low';overlay.src='/api/grid-overlay?path='+enc(path)+'&kind=masks&rev='+S.obsRevision}}
  img.addEventListener('load',sourceReady,{once:true});if(img.complete&&img.naturalWidth)sourceReady();
  function choose(i){selected=Number(i);const o=obs[selected];v.querySelectorAll('.teachObs button').forEach(b=>b.classList.toggle('active',Number(b.dataset.oi)===selected));$('#teachSelected').textContent=`${observationLabel(o)} · ${o.provider} · ${o.model}${subjectSeparationNote(o)?' · '+subjectSeparationNote(o):''}`;const review=geometryOf(o)?.qwen_review;if(review){$('#teachSelected').textContent+='\nLanguage model draft: '+review.label+'\nVisible features: '+(review.visible_features||[]).join(', ')+'\nBelongs to this subject: '+(review.owned_objects||[]).join(', ')+'\nEvidence: '+(review.evidence||[]).join('; ')+'\nUncertain: '+(review.uncertain||[]).join('; ');$('#teachSelected').style.whiteSpace='pre-wrap';}$('#rejectObsBtn').disabled=false;$('#relabelObsBtn').disabled=false;
- const learned=geometryOf(o)?.trained_class_review;if(learned){$('#teachSelected').style.whiteSpace='pre-wrap';$('#teachSelected').textContent+='\nLearned class: '+(learned.accepted?learned.label+' (draft)':'Unidentified — insufficient support')+' · score '+Math.round(learned.score*100)+'%';}
+ const learned=geometryOf(o)?.trained_class_review;if(learned){$('#teachSelected').style.whiteSpace='pre-wrap';$('#teachSelected').textContent+='\nLearned class: '+(learned.accepted?learned.label+' (draft)':'Unidentified — insufficient support')+' · score '+Math.round(learned.score*100)+'%'+(!learned.accepted?'\n'+(learned.rejection_reasons||[]).join('; '):'');}
  const parts=geometryOf(o)?.subject_parts||[];if(parts.length||geometryOf(o)?.ownership_status==='unresolved')$('#teachSelected').style.whiteSpace='pre-wrap';if(geometryOf(o)?.ownership_status==='unresolved')$('#teachSelected').textContent+='\nOwner unresolved. Use Add part to subject to choose its owner.';if(parts.length)$('#teachSelected').textContent+='\nParts: '+parts.map(part=>part.concept+(part.confirmation==='manual'?' (confirmed)':' (draft)')).join(', ');
+ $('#guidedSubjectSplitBtn').disabled=!(S.capabilities.subject_intelligence&&isSubjectObservation(o)&&o.kind==='mask'&&geometryOf(o)?.bbox);
  $('#confirmLMClassBtn').disabled=!(S.capabilities.subject_intelligence&&geometryOf(o)?.qwen_review?.label);$('#confirmLearnedClassBtn').disabled=!(S.capabilities.subject_intelligence&&geometryOf(o)?.trained_class_review?.accepted);
  const lesson=geometryOf(o)?.subject_learning;
  $('#learnSubjectBtn').disabled=!(isSubjectObservation(o)&&lesson?.revision&&!lesson.confirmed&&lesson.label===o.concept);
  $('#addSubjectPartBtn').disabled=!(o.kind==='mask'&&!isSubjectObservation(o)&&obs.some(x=>x.kind==='mask'&&isSubjectObservation(x)));
  $('#subjectLearningStatus').textContent=lesson?.confirmed?'Teaching example saved · class training queue':!$('#learnSubjectBtn').disabled?'Manual subject change ready to teach':'';
  gridActivity('inspector-select');drawExisting();svg.querySelectorAll('.teachExisting').forEach(r=>{const index=Number(r.dataset.oi);r.classList.toggle('active',selected===index);r.style.stroke=selected===index?'#ffd45a':detectorColor(obs[index].provider,obs[index].model)})}
+ S.refreshRecognitionInspector=async changedPaths=>{
+  if(!changedPaths.includes(path)||S.viewer!==path||!v.contains(svg)||startPt||v.querySelector('.maskCanvasStack'))return;
+  const prior=selected===null?null:obs[selected];await refreshOne(path);
+  if(S.viewer!==path||!v.contains(svg)||startPt||v.querySelector('.maskCanvasStack'))return;
+  obs.splice(0,obs.length,...editableObservations(S.files.find(f=>f.path===path)||{}));geometries.splice(0,geometries.length,...obs.map(geometryOf));
+  const host=v.querySelector('.teachObs');host.innerHTML=obs.map((o,i)=>`<button data-oi="${i}" title="${esc(o.provider)} · ${esc(o.model)}">${esc(observationLabel(o))}${esc(recognitionNote(o))} · ${Math.round(observationConfidence(o)*100)}% <small>(${esc(modelShortName(o.model))})</small></button>`).join('');
+  host.querySelectorAll('button').forEach(b=>b.onclick=()=>choose(b.dataset.oi));
+  selected=prior?obs.findIndex(o=>o.provider===prior.provider&&o.model===prior.model&&JSON.stringify(geometryOf(o)?.bbox)===JSON.stringify(geometryOf(prior)?.bbox)):null;
+  if(selected!==null&&selected>=0)choose(selected);else{selected=null;drawExisting()}
+ };
  v.querySelectorAll('.teachObs button').forEach(b=>b.onclick=()=>choose(b.dataset.oi));
+ S.refreshRecognitionInspector([path]).catch(error=>console.warn('Inspector metadata refresh failed',error));
  if(selectBox){const index=obs.findIndex((o,i)=>o.concept===selectConcept&&geometries[i]?.bbox?.every((n,k)=>Math.abs(n-selectBox[k])<.001));if(index>=0)choose(index)}
- async function correct(action){if(selected===null)return;const o=obs[selected];let corrected=null;if(action==='relabel'){corrected=prompt(`What is this ${o.concept}, actually?`,geometryOf(o)?.trained_class_review?.accepted?geometryOf(o).trained_class_review.label:(geometryOf(o)?.qwen_review?.label||''));if(!corrected?.trim())return}await post('/api/observations/correct',{path,concept:o.concept,provider:o.provider,model:o.model,kind:o.kind,geometry:o.geometry??null,action,corrected_concept:corrected});await refreshOne(path);openViewer(path,{selectConcept:action==='relabel'?corrected.trim():null,selectBox:geometryOf(o)?.bbox});refreshDiscovered()}
+ async function correct(action){if(selected===null)return;const o=obs[selected];let corrected=null;if(action==='relabel'){corrected=await window.chooseObservationLabel({concept:o.concept,subject:isSubjectObservation(o),suggestion:geometryOf(o)?.trained_class_review?.accepted?geometryOf(o).trained_class_review.label:(geometryOf(o)?.qwen_review?.label||'')});if(!corrected?.trim())return}await post('/api/observations/correct',{path,concept:o.concept,provider:o.provider,model:o.model,kind:o.kind,geometry:o.geometry??null,action,corrected_concept:corrected});await refreshOne(path);openViewer(path,{selectConcept:action==='relabel'?corrected.trim():null,selectBox:geometryOf(o)?.bbox});refreshDiscovered()}
  $('#rejectObsBtn').onclick=()=>correct('reject');$('#relabelObsBtn').onclick=()=>correct('relabel');
+ $('#guidedSubjectSplitBtn').onclick=()=>{if(selected===null)return;openGuidedSubjectSplit({path,observation:obs[selected],sourceUrl:img.src,onDone:async()=>{await refreshOne(path);openViewer(path);refreshDiscovered()}})};
  const subjectRef=o=>({path,concept:o.concept,provider:o.provider,model:o.model,kind:o.kind,geometry:o.geometry??null});
  for(const [id,source] of [['#confirmLMClassBtn','language_model'],['#confirmLearnedClassBtn','trained']])$(id).onclick=async()=>{if(selected===null)return;try{const result=await post('/api/subjects/classes/confirm',{...subjectRef(obs[selected]),source});await refreshOne(path);openViewer(path,{selectConcept:result.label,selectBox:geometryOf(obs[selected])?.bbox});$('#status').textContent='Class confirmed; click Learn Subject to save its composite'}catch(error){alert(error.message)}};
  $('#learnSubjectBtn').onclick=async()=>{if(selected===null)return;const button=$('#learnSubjectBtn');button.disabled=true;try{const lesson=await post('/api/observations/learn-subject',subjectRef(obs[selected]));$('#status').textContent=lesson.class_registered?'Composite saved for class training: '+lesson.class_key:'Ownership lesson saved';scheduleJobsPoll(500);await S.refreshSubjectClassStatus?.();await refreshOne(path);openViewer(path,{selectConcept:obs[selected].concept,selectBox:geometryOf(obs[selected])?.bbox})}catch(error){alert(error.message);choose(selected)}};
@@ -585,7 +670,7 @@ function openViewer(path,{selectBox=null,selectConcept=null}={}){observationRefr
    // Use the canonical save receipt: no second query, image reload or viewer rebuild.
    const index=acceptTaughtBox(obs,geometries,taught,result.geometry);
    f.observations=(f.observations||[]).filter(o=>!(o.provider===taught.provider&&o.model===taught.model&&o.kind==='bbox'&&o.concept===taught.concept&&JSON.stringify(geometryOf(o)?.bbox)===JSON.stringify(result.geometry.bbox)));
-   f.observations.push(taught);if(S.mobile)mobilePager?.remember(f);
+   f.observations.push(taught);if(pagedBrowse())mobilePager?.remember(f);
    if(S.viewer===path&&v.querySelector('.teachOverlay')===svg){
     const list=v.querySelector('.teachObs');list.querySelector('.tiny')?.remove();
     if(!list.querySelector(`button[data-oi="${index}"]`)){
@@ -629,7 +714,7 @@ function fileAspect(f){
 }
 function mobileRowHeight(row){return Math.max(1,...(row||[]).map(x=>x.h||1))}
 function ringPool(layout,cursor){
- const n=layout.rows.length;if(!S.mobile){const count=Math.min(n,layout.viewRows+4),before=Math.min(2,Math.max(0,count-layout.viewRows));return {first:cursor-before,count};}
+ const n=layout.rows.length;if(!S.mobile){const count=Math.min(n,layout.viewRows+4),before=Math.min(2,Math.max(0,count-layout.viewRows));const first=pagedBrowse()?Math.max(0,cursor-before):cursor-before;return {first,count:pagedBrowse()?Math.min(count,n-first):count};}
  const first=Math.max(0,cursor-2);let end=cursor,height=0;
  while(end<n&&height<layout.gh){height+=mobileRowHeight(layout.rows[end])+layout.gap;end++;}
  return {first,count:Math.min(n,end+2)-first};
@@ -661,10 +746,10 @@ async function applyMobileSnapshot(snapshot,anchor,pager){
  if(pager!==mobilePager)return;if(mobileLayoutTask)await mobileLayoutTask;if(pager!==mobilePager)return;
  S.mobileWindowBusy=true;S.touchRingBusy=true;document.body.classList.add('mobileWindowChanging');
  try{
-  S.files=snapshot.files;await prepareMobileViewport(anchor||S.files[0]?.path);
+  S.files=snapshot.files;S.mobileNavigationPosition=snapshot.position;await prepareMobileViewport(anchor||S.files[0]?.path);
   if(pager!==mobilePager)return;
   const label=`Images ${snapshot.first+1}–${snapshot.last+1} · ${S.files.length.toLocaleString()} loaded`;
-  $('#mobilePagingInfo').textContent=label+' · Search and sort use this window';
+  $('#mobilePagingInfo').textContent=label+' · Search, filters and sort use this window';
   renderScopeFolders();refreshSelectionUI();
   const resident=new Set(S.files.map(f=>canonPath(f.path)));for(const [url,entry] of [...thumbAssets]){
    try{if(resident.has(canonPath(new URL(url,location.href).searchParams.get('path'))))continue;}catch(_){}
@@ -673,15 +758,16 @@ async function applyMobileSnapshot(snapshot,anchor,pager){
  }finally{if(pager===mobilePager){S.mobileWindowBusy=false;S.touchRingBusy=false;document.body.classList.remove('mobileWindowChanging');if(S.mobileReflowPending)reflowMobileColumns();else paintRing();}}
 }
 function maybeRotateMobileWindow(){
+ if(!S.mobile&&(S.sortKey!=='none'||S.sortDir!=='asc'||S.semantic||S.compare))return;
  if(!mobilePager||S.viewer||S.mobileWindowBusy||S.touchRingBusy||mobilePageTask)return;
  const v=S.virtualGrid,anchor=v.rows[v.cursor]?.[0]?.f;if(!anchor)return;
- const position=S.mobileNavigationPosition??anchor._n8ArchiveIndex,block=Math.floor(position/500),lo=Math.max(0,block-1),hi=mobilePager.endPage===null?block+1:Math.min(block+1,mobilePager.endPage);
+ const position=anchor._n8ArchiveIndex,block=Math.floor(position/500),{lo,hi}=mobilePager.range(position);
  if(mobilePager.pages.size===hi-lo+1&&[...mobilePager.pages.keys()].every(k=>k>=lo&&k<=hi))return;
  const pager=mobilePager;mobilePageTask=(async()=>{
   let reversed=false;try{const snapshot=await pager.focus(position);if(!snapshot||pager!==mobilePager)return;
    // Navigation may have reversed while fetching: never install its obsolete window.
    const current=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f;if(!current)return;
-   if(Math.floor((S.mobileNavigationPosition??current._n8ArchiveIndex)/500)!==block){reversed=true;return;}
+   if(Math.floor(current._n8ArchiveIndex/500)!==block){reversed=true;return;}
    if(snapshot.changed)await applyMobileSnapshot(snapshot,current.path,pager);
   }catch(e){if(e.name!=='AbortError'){$('#status').textContent='Page loading failed: '+e.message;console.warn(e)}}
   finally{mobilePageTask=null;if(reversed&&pager===mobilePager)maybeRotateMobileWindow();}
@@ -714,7 +800,7 @@ function virtualGridLayout(fs){
 function virtualCardParts(f,sm,cm,w){
  const q=qualityScore(f),width=Math.round(w),selected=S.selected.has(f.path);
  if(f._n8ForwardTo){
-  const inner=`<div class="thumb tombstoneThumb"><div class="farmMarker"><svg class="movingHandTruck" viewBox="0 0 120 120" width="96" height="96" role="img" aria-label="Laden hand-truck"><title>Moved to another root</title><g transform="rotate(-16 60 65)"><path d="M85 15h12v65H30" fill="none" stroke="#b9c8d8" stroke-width="7" stroke-linecap="round"/><path d="M35 32h47v43H35z" fill="#d49b52" stroke="#684521" stroke-width="3"/><path d="M45 8h37v24H45z" fill="#edc48b" stroke="#684521" stroke-width="3"/><path d="M61 9v22M59 34v39" stroke="#936932" stroke-width="7"/><circle cx="88" cy="89" r="14" fill="#283748" stroke="#b9c8d8" stroke-width="4"/><circle cx="88" cy="89" r="4" fill="#edc48b"/></g></svg><b>moved to another root</b><span>left forwarding address</span><span>${esc(f.name)}</span></div></div><div class="detailBadges"><div class="hoverIdentity" title="${esc(f.path)} → ${esc(f._n8ForwardTo)}"><span>${esc(f.name)}</span><span class="qualityScore">forwarded</span></div></div>`;
+  const inner=`<div class="thumb tombstoneThumb"><div class="farmMarker"><svg class="movingHandTruck" viewBox="0 0 120 120" width="96" height="96" role="img" aria-label="Laden hand-truck"><title>Moved to a new location</title><g transform="rotate(-16 60 65)"><path d="M85 15h12v65H30" fill="none" stroke="#b9c8d8" stroke-width="7" stroke-linecap="round"/><path d="M35 32h47v43H35z" fill="#d49b52" stroke="#684521" stroke-width="3"/><path d="M45 8h37v24H45z" fill="#edc48b" stroke="#684521" stroke-width="3"/><path d="M61 9v22M59 34v39" stroke="#936932" stroke-width="7"/><circle cx="88" cy="89" r="14" fill="#283748" stroke="#b9c8d8" stroke-width="4"/><circle cx="88" cy="89" r="4" fill="#edc48b"/></g></svg><b>moved to a new location</b><span>left forwarding address</span><span>${esc(f.name)}</span></div></div><div class="detailBadges"><div class="hoverIdentity" title="${esc(f.path)} → ${esc(f._n8ForwardTo)}"><span>${esc(f.name)}</span><span class="qualityScore">forwarded</span></div></div>`;
   return {width,selected:false,inner};
  }
  if(f._n8Tombstone){
@@ -727,7 +813,7 @@ function virtualCardParts(f,sm,cm,w){
 function bindVirtualCard(c){c.onclick=e=>{const f=S.files.find(x=>x.path===c.dataset.p);if(f?._n8ForwardTo){$('#status').textContent=`Moved to ${f._n8ForwardTo} · double-click to follow`;return}select(c.dataset.p,e)};c.ondblclick=e=>{e.preventDefault();const f=S.files.find(x=>x.path===c.dataset.p);if(f?._n8ForwardTo){const dest=f._n8ForwardTo;const parent=dest.slice(0,Math.max(dest.lastIndexOf('\\'),dest.lastIndexOf('/')));navigateTo(parent,false,'forwarding-address');return}inspectRequest(c.dataset.p)}}
 function updateVirtualCard(c,f,sm,cm,w){
  const x=virtualCardParts(f,sm,cm,w),cls=`card ${x.selected?'selected':''}`;if(c.className!==cls)c.className=cls;if(c.style.width!==`${x.width}px`)c.style.width=`${x.width}px`;
- if(c._n8Inner!==x.inner){c.innerHTML=x.inner;c._n8Inner=x.inner}c.dataset.p=f.path;return c;
+ if(c._n8Inner!==x.inner){c.innerHTML=x.inner;c._n8Inner=x.inner}c.dataset.p=f.path;if(pendingDeletes.size)paintDeletePending(c,pendingDeletes.has(canonPath(f.path)));return c;
 }
 function newVirtualCard(){const c=document.createElement('div');bindVirtualCard(c);return c}
 function mod(n,m){return ((n%m)+m)%m}
@@ -798,7 +884,7 @@ function pumpRowPrep(){
 function prepareNeighborhood(){
  if(S.touchRingBusy)return;
  const v=S.virtualGrid,n=v.rows.length;if(!n)return;const flank=S.mobile?4:Math.max(1,S.ringBufferRows||50),bias=Math.max(1,S.ringSouthBias||2),seen=new Set(),q=[];
- const add=ri=>{if(S.mobile&&(ri<0||ri>=n))return;ri=mod(ri,n);if(!seen.has(ri)){seen.add(ri);q.push(ri)}};add(v.cursor);if(S.mobile){const pool=ringPool(virtualGridLayout(v.files),v.cursor);for(let i=0;i<pool.count;i++)add(pool.first+i);}
+ const add=ri=>{if(pagedBrowse()&&(ri<0||ri>=n))return;ri=mod(ri,n);if(!seen.has(ri)){seen.add(ri);q.push(ri)}};add(v.cursor);{const pool=ringPool(virtualGridLayout(v.files),v.cursor);for(let i=0;i<pool.count;i++)add(pool.first+i);}
  // P.48 scouts: the neutral rack remains ±flank, but committed motion stretches the runway
  // beyond the read head. One consumed row exposes the normal new edge plus one speculative
  // row, so sustained travel prepares two fresh rows for every row consumed.
@@ -822,7 +908,7 @@ function armScoutDecay(){
  },3000);
 }
 function reportRingMovement(dir){
- const v=S.virtualGrid;dir=Math.sign(dir);if(!dir)return;if(S.mobile){S.mobileNavigationDirty=true;S.mobileNavigationPosition=v.rows[v.cursor]?.[0]?.f?._n8ArchiveIndex;}
+ const v=S.virtualGrid;dir=Math.sign(dir);if(!dir)return;if(pagedBrowse()){S.mobileNavigationDirty=true;S.mobileNavigationPosition=v.rows[v.cursor]?.[0]?.f?._n8ArchiveIndex;}
  if(v.scoutDir!==dir)v.scoutExtra=0;
  v.scoutDir=dir;v.scoutExtra=Math.min(Math.max(1,S.ringBufferRows||50),v.scoutExtra+1);v.scoutLastMove=performance.now();armScoutDecay();
 }
@@ -842,10 +928,17 @@ function warmArchiveTail(){scheduleArchiveWarm()}
 function positionRingPool(){
  const v=S.virtualGrid,g=$('#grid'),rows=[...g.querySelectorAll('.visualRow')];for(const r of rows)r.style.marginTop='';
  if(S.mobile){if(rows.length){let height=0;for(let i=v.firstLogical;i<v.cursor;i++)height+=mobileRowHeight(v.rows[i])+virtualGridLayout(v.files).gap;rows[0].style.marginTop=`${-height}px`;}return;}
- if(rows.length){const l=virtualGridLayout(v.files||[]),before=Math.min(2,Math.max(0,Math.floor((rows.length-l.viewRows)/2)));rows[0].style.marginTop=`${-before*l.rowH}px`}
+ if(rows.length){const l=virtualGridLayout(v.files||[]),before=v.cursor-v.firstLogical;rows[0].style.marginTop=`${-before*l.rowH}px`}
 }
 // I.2t-d: placeholders belong to the cached layout. Scrolling and buffer
 // eviction never retire records or repack rows; ordinary layout rebuilds do.
+function readyRingPool(pool,cursor,isReady){
+ if(!pool.count||!isReady(cursor))return null;
+ let first=cursor,end=cursor+1;
+ while(first>pool.first&&isReady(first-1))first--;
+ while(end<pool.first+pool.count&&isReady(end))end++;
+ return {first,count:end-first};
+}
 function paintRing(){
  if(S.viewer||S.touchRingBusy)return;
  // Reconcile a renamed filename only after its old card has left the hot DOM.
@@ -879,32 +972,34 @@ function paintRing(){
  }
  const v=S.virtualGrid,l=virtualGridLayout(v.files||[]),g=l.g;v.rows=l.rows;v.rowH=l.rowH;
  if(!l.rows.length){g.replaceChildren();updateArchiveNavigator();return}
- v.cursor=S.mobile?Math.max(0,Math.min(v.cursor,l.rows.length-1)):mod(v.cursor,l.rows.length);prepareNeighborhood();
+ v.cursor=pagedBrowse()?Math.max(0,Math.min(v.cursor,l.rows.length-1)):mod(v.cursor,l.rows.length);prepareNeighborhood();
  // Hot DOM is deliberately tiny. The ±50 layup lives in the READY drawer, not on stage.
- const pool=ringPool(l,v.cursor),poolRows=pool.count,first=pool.first;
- // Never admit a half-built row. Keep the previous completed layup until the requested one is ready.
- for(let k=0;k<poolRows;k++)if(!rowReady(first+k)){prepareRow(first+k);return}
+ const requested=ringPool(l,v.cursor);
+ // A completed focal row can appear immediately; offscreen buffer rows cannot gate it.
+ const ready=readyRingPool(requested,v.cursor,rowReady);
+ if(!ready){prepareRow(v.cursor);return}
+ const poolRows=ready.count,first=ready.first;
  const wanted=[];
  for(let k=0;k<poolRows;k++){const ri=mod(first+k,l.rows.length),spec=l.rows[ri],entry=v.rowReady.get(rowKey(spec));if(!entry?.node)return;wanted.push(entry.node)}
  // The viewport receives already-constructed rows. No thumbnail assignment occurs here.
- g.replaceChildren(...wanted);v.poolRows=poolRows;v.firstLogical=first;positionRingPool();syncGeometryViews();updateArchiveNavigator();scheduleArchiveWarm();if(S.mobile&&S.mobileNavigationDirty){S.mobileNavigationDirty=false;maybeRotateMobileWindow();}
+ g.replaceChildren(...wanted);gridFirstPaint();v.poolRows=poolRows;v.firstLogical=first;positionRingPool();syncGeometryViews();updateArchiveNavigator();scheduleArchiveWarm();if(pagedBrowse()&&S.mobileNavigationDirty){S.mobileNavigationDirty=false;maybeRotateMobileWindow();}
 }
 function scheduleRingPaint(){const v=S.virtualGrid;if(v.raf)return;v.raf=requestAnimationFrame(()=>{v.raf=0;paintRing()})}
 function moveRingRows(delta){
  gridActivity('ring-row');
- const v=S.virtualGrid,n=v.rows.length;if(!n||!delta)return;const dir=Math.sign(delta),target=S.mobile?Math.max(0,Math.min(n-1,v.cursor+dir)):mod(v.cursor+dir,n);
+ const v=S.virtualGrid,n=v.rows.length;if(!n||!delta)return;const dir=Math.sign(delta),target=pagedBrowse()?Math.max(0,Math.min(n-1,v.cursor+dir)):mod(v.cursor+dir,n);
  // Row-at-a-time on purpose. If the next completed prefab is not in the drawer, stop at the frontier.
  if(!rowReady(target)){prepareRow(target);prepareNeighborhood();return}
  v.cursor=target;reportRingMovement(dir);paintRing();
 }
 function renderVirtualGrid(){paintRing()}
 function render(){
- const fs=visibleFiles(),g=$('#grid');if(!S.imageGridEnabled){g.replaceChildren();S.virtualGrid.files=[];$('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${S.mobile?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton();updateArchiveNavigator();return}
+ const fs=visibleFiles(),g=$('#grid');if(!S.imageGridEnabled){g.replaceChildren();S.virtualGrid.files=[];$('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton();updateArchiveNavigator();return}
  const old=S.virtualGrid.files;S.virtualGrid.files=fs;if(old!==fs)invalidateRingLayout();S.virtualGrid.sm=S.semantic?new Map(S.semantic.map(x=>[x.path,x.score])):null;S.virtualGrid.cm=S.compare?new Map(S.compare.results.map(x=>[x.path,x.score])):null;
  const structural=old.length!==fs.length||old.some((f,i)=>fs[i]?.path!==f.path);
  if(structural&&old.length===0)S.virtualGrid.cursor=0;
  paintRing();
- $('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${S.mobile?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton()
+ $('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton()
 }
 function scheduleVirtualGrid(){const v=S.virtualGrid;if(v.raf)return;v.raf=requestAnimationFrame(()=>{v.raf=0;paintRing()})}
 
@@ -936,7 +1031,7 @@ function showArchivePreview(path,mark){
 }
 function hideArchivePreview(){const p=$('#archivePreview');if(p)p.hidden=true}
 function teleportArchive(frac){gridActivity('ring-teleport');
- const rows=S.virtualGrid.rows;if(!rows.length)return;const [lo,hi]=archiveNavRange(),target=Math.max(lo,Math.min(hi,Math.round(lo+frac*(hi-lo))));prepareRow(target).then(()=>{S.virtualGrid.cursor=target;if(S.mobile){S.mobileNavigationDirty=true;S.mobileNavigationPosition=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f?._n8ArchiveIndex;}paintRing()});
+ const rows=S.virtualGrid.rows;if(!rows.length)return;const [lo,hi]=archiveNavRange(),target=Math.max(lo,Math.min(hi,Math.round(lo+frac*(hi-lo))));prepareRow(target).then(()=>{S.virtualGrid.cursor=target;if(pagedBrowse()){S.mobileNavigationDirty=true;S.mobileNavigationPosition=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f?._n8ArchiveIndex;}paintRing()});
 }
 function setupArchiveNavigator(){
  const grid=$('#grid'),track=$('#archiveTrack'),vector=$('#archiveVector'),add=$('#archiveAnchorAdd'),whole=$('#archiveWhole');if(!grid||!track||!vector)return;
@@ -951,10 +1046,38 @@ function setupArchiveNavigator(){
  const stop=()=>{dragging=false;velocity=0;last=0;cancelAnimationFrame(frame);vector.style.top='50%'};
  vector.addEventListener('pointerup',stop);vector.addEventListener('pointercancel',stop);
 }
-function refreshSelectionUI(changed=null){const cards=changed?Array.from(changed,p=>document.querySelector(`#grid .card[data-p=\"${CSS.escape(p)}\"]`)).filter(Boolean):document.querySelectorAll('#grid .card');cards.forEach(c=>c.classList.toggle('selected',S.selected.has(c.dataset.p)));$('#selCount').textContent=S.selected.size;const clear=$('#clearSelectedBtn');if(clear)clear.disabled=!S.selected.size;const shown=visibleFiles().length;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${shown.toLocaleString()} · ${S.mobile?'Loaded':'Total'} ${S.files.length.toLocaleString()}`}
-function select(p,e={}){if(S.suppressClickUntil&&performance.now()<S.suppressClickUntil)return;const fs=visibleFiles(),shift=!!(e.shiftKey||S.softShift),changed=new Set();if(shift&&S.selectionAnchor){const a=fs.findIndex(f=>f.path===S.selectionAnchor),b=fs.findIndex(f=>f.path===p);if(a>=0&&b>=0)for(let i=Math.min(a,b);i<=Math.max(a,b);i++){S.selected.add(fs[i].path);changed.add(fs[i].path)}}else{S.selected.has(p)?S.selected.delete(p):S.selected.add(p);changed.add(p);S.selectionAnchor=p}consumeSoftModifiers();refreshSelectionUI(changed)}
+function refreshSelectionUI(changed=null){const cards=changed?Array.from(changed,p=>document.querySelector(`#grid .card[data-p=\"${CSS.escape(p)}\"]`)).filter(Boolean):document.querySelectorAll('#grid .card');cards.forEach(c=>c.classList.toggle('selected',S.selected.has(c.dataset.p)));$('#selCount').textContent=S.selected.size;const clear=$('#clearSelectedBtn');if(clear)clear.disabled=!S.selected.size;const shown=S.virtualGrid.files.length;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${shown.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`}
+function selectionViewKey(){return JSON.stringify([S.path,S.scopeRoot,S.scopeRecursive,[...S.scopeSelections||[]],S.sortKey,S.sortDir,$('#search').value,$('#minConfidence').value,[...S.magnets.values()].map(m=>[m.key,m.mode,m.op,m.count])])}
+function select(p,e={}){
+ if(S.suppressClickUntil&&performance.now()<S.suppressClickUntil)return;
+ observationRefreshController?.abort();const request=S.selectionRequest=(S.selectionRequest||0)+1,shift=!!(e.shiftKey||S.softShift),changed=new Set();
+ if(shift){e.preventDefault?.();window.getSelection()?.removeAllRanges()}
+ if(shift&&S.selectionAnchor){
+  const range=inclusiveCatalogRange(S.virtualGrid.files,S.selectionAnchor,p);
+  if(range){for(const path of range){S.selected.add(path);changed.add(path)}}
+  else{
+   const anchor=S.selectionAnchorMeta,target=S.files.find(f=>f.path===p),key=selectionViewKey();
+   const plain=S.sortKey==='none'&&!S.semantic&&!S.compare&&!$('#search').value.trim()&&![...S.magnets.values()].some(m=>m.mode!=='0')&&!(S.scopeSelections?.size);
+   if(plain&&mobilePager&&anchor?.tx===S.mobileBrowseTx&&anchor.key===key&&Number.isInteger(anchor.index)&&Number.isInteger(target?._n8ArchiveIndex)){
+    const pager=mobilePager,tx=S.mobileBrowseTx,lo=Math.min(anchor.index,target._n8ArchiveIndex),hi=Math.max(anchor.index,target._n8ArchiveIndex);
+    $('#status').textContent='Selecting inclusive range…';
+    j(`/api/browse/range?tx=${enc(tx)}&first=${lo}&last=${hi}`).then(result=>{
+     if(S.selectionRequest!==request||mobilePager!==pager||S.mobileBrowseTx!==tx||S.semantic||S.compare||selectionViewKey()!==key)return;
+     for(const item of result.paths){const file=pager.restore({path:item.path,_n8ArchiveIndex:item.index});if(!file._n8Tombstone&&!file._n8ForwardTo)S.selected.add(file.path)}
+     refreshSelectionUI();$('#status').textContent='Inclusive range selected · '+result.paths.length.toLocaleString()+' archive positions';
+    }).catch(error=>{if(S.selectionRequest===request)$('#status').textContent='Range selection failed: '+error.message});
+   }else $('#status').textContent='Selection anchor is outside this view. Clear selection or choose the anchor again; no range guessed.';
+  }
+ }else{
+  S.selected.has(p)?S.selected.delete(p):S.selected.add(p);changed.add(p);S.selectionAnchor=p;
+  const file=S.files.find(f=>f.path===p);S.selectionAnchorMeta={tx:S.mobileBrowseTx,index:file?._n8ArchiveIndex,key:selectionViewKey()};
+ }
+ consumeSoftModifiers();refreshSelectionUI(changed);
+}
+installGridSelectionGuard($('#grid'));
+
 function consumeSoftModifiers(){if(S.softCtrl||S.softShift){S.softCtrl=false;S.softShift=false;updateSoftModifiers()}}
-function inspectRequest(path){if(S.selected.size<=1)return openViewer(path);const old=$('#multiChoice');if(old)old.remove();const d=document.createElement('div');d.id='multiChoice';d.className='multiChoice';d.innerHTML=`<div class="multiChoiceCard"><b>Inspect selection</b><div>${S.selected.size} images selected.</div><div class="buttonGrid"><button id="inspectSingle">Single</button><button id="inspectMulti" title="Yeah, all the images I selected. I want to look at them all a bit closer for whatever reason.">Multi-Work</button></div></div>`;document.body.appendChild(d);$('#inspectSingle').onclick=()=>{d.remove();openViewer(path)};$('#inspectMulti').onclick=()=>{d.remove();const q=visibleFiles().filter(f=>S.selected.has(f.path)).map(f=>f.path),i=Math.max(0,q.indexOf(path));S.multiWork=q;S.multiIndex=i;openViewer(q[i])}}
+function inspectRequest(path){if(S.selected.size<=1)return openViewer(path);const old=$('#multiChoice');if(old)old.remove();const d=document.createElement('div');d.id='multiChoice';d.className='multiChoice';d.innerHTML=`<div class="multiChoiceCard"><b>Inspect selection</b><div>${S.selected.size} images selected.</div><div class="buttonGrid"><button id="inspectSingle">Single</button><button id="inspectMulti" title="Yeah, all the images I selected. I want to look at them all a bit closer for whatever reason.">Multi-Work</button></div></div>`;document.body.appendChild(d);$('#inspectSingle').onclick=()=>{d.remove();openViewer(path)};$('#inspectMulti').onclick=()=>{d.remove();const q=S.virtualGrid.files.filter(f=>S.selected.has(f.path)).map(f=>f.path),i=Math.max(0,q.indexOf(path));S.multiWork=q;S.multiIndex=i;openViewer(q[i])}}
 async function post(url,obj){try{return await j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)})}catch(e){alert(e.message);throw e}}
 async function stopAnalysis(){try{const r=await post('/api/jobs/stop-analysis',{});$('#status').textContent=r.requested?`Stop requested for ${r.requested} analysis job${r.requested===1?'':'s'}; current image will finish first.`:'No active analysis jobs.';await refreshJobs()}catch(e){alert(e.message)}}
 const stopA=$('#stopAnalysisBtn'),stopB=$('#orderingStopAnalysisBtn');if(stopA)stopA.onclick=stopAnalysis;if(stopB)stopB.onclick=stopAnalysis;
@@ -977,24 +1100,37 @@ async function refreshObservations(preserveLayout=false){
  try{
   // Observation refresh is background telemetry. Never route a transient/empty response
   // through post(), whose alert is appropriate for explicit user actions.
-  const r=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:S.files.map(x=>x.path)}),signal:controller.signal});
-  if(S.viewer)return;
-  const map=r.observations||{};
-  S.files.forEach(f=>{if(Object.prototype.hasOwnProperty.call(map,f.path))f.observations=map[f.path]});
+  const files=S.files,targets=new Map();let revision=null;
+  for(const f of files)targets.set(f.path,new Set([f]));
+  for(const catalog of rootCatalogs.values())for(const f of catalog.files||[])if(targets.has(f.path))targets.get(f.path).add(f);
+  for(let start=0;start<files.length;start+=50){
+   if(controller.signal.aborted||S.viewer||files!==S.files)return;
+   const packet=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:files.slice(start,start+50).map(x=>x.path)}),signal:controller.signal});
+   if(controller.signal.aborted||S.viewer||files!==S.files)return;
+   // Only certify the first revision observed: later writes may affect prior batches.
+   revision??=packet.revision;
+   for(const [path,observations] of Object.entries(packet.observations||{})){for(const f of targets.get(path)||[])f.observations=observations;mobilePager?.rememberObservations(path,observations)}
+   await new Promise(resolve=>setTimeout(resolve,0));
+  }
+  const r={revision};
   S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(preserveLayout){
    const files=new Map(S.files.map(f=>[f.path,f]));
-   for(const entry of S.virtualGrid.rowReady.values())for(const card of entry.node?.querySelectorAll('.card')||[]){
-    const f=files.get(card.dataset.p);if(!f)continue;
-    const box=card.querySelector('.badges');if(box)box.innerHTML=badges(f);
-    const identity=card.querySelector('.hoverIdentity'),q=qualityScore(f);
-    if(identity)identity.innerHTML=`<span>${esc(f.name)}</span>${q?`<span class="qualityScore">${q}</span>`:''}`;
+   for(const entry of S.virtualGrid.rowReady.values()){
+    if(controller.signal.aborted||S.viewer)return;
+    for(const card of entry.node?.querySelectorAll('.card')||[]){
+     const f=files.get(card.dataset.p);if(!f)continue;
+     const box=card.querySelector('.badges');if(box)box.innerHTML=badges(f);
+     const identity=card.querySelector('.hoverIdentity'),q=qualityScore(f);
+     if(identity)identity.innerHTML=`<span>${esc(f.name)}</span>${q?`<span class="qualityScore">${q}</span>`:''}`;
+    }
+    await new Promise(resolve=>setTimeout(resolve,0));
    }
    refreshSelectionUI();
-  }else render();refreshDiscovered();
+  }else render();S.catalogObsRevision=Number(r.revision??S.catalogObsRevision??0);refreshDiscovered();
  }catch(e){if(e.name!=='AbortError')console.warn('Observation refresh failed',e)}finally{if(observationRefreshController===controller)observationRefreshController=null}
 }
 function fmtEta(sec){if(sec==null||!isFinite(sec))return'';sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),q=sec%60;return h?`${h}h ${m}m ETA`:m?`${m}m ${q}s ETA`:`${q}s ETA`}
-async function refreshJobsCore(){const r=await j('/api/jobs');const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=x.kind==='subject-class-training'?` · ${esc(x.phase||x.state)}`:verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!active&&!S.viewer&&Number(r.observation_revision||0)>Number(String(S.obsRevision).split('-')[0])){invalidateVisibleAssets();await refreshObservations(true);S.obsRevision=String(r.observation_revision||S.obsRevision).split('-')[0]+'-'+assetEpoch}if(S.refreshSubjectClassStatus){const stamp=r.jobs.filter(job=>job.kind==='subject-class-training').map(job=>job.id+':'+job.state+':'+job.phase).join('|');if(stamp!==S.lastClassTrainingJob||S.classTrainingBusy){S.lastClassTrainingJob=stamp;await S.refreshSubjectClassStatus()}}return active||!!S.classTrainingBusy}
+async function refreshJobsCore(){const r=await j('/api/jobs');for(const job of r.jobs){if(job.kind!=='subject-class-recognition'||job.state!=='done'||!job.result?.summary)continue;S.seenRecognitionJobs??=new Set();if(S.seenRecognitionJobs.has(job.id))continue;await synchronizeRecognitionPaths(job.result.paths||[]);await S.refreshRecognitionInspector?.(job.result.paths||[]);S.seenRecognitionJobs.add(job.id);$('#status').textContent=job.result.summary;if(job.result.applied)refreshDiscovered()}const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=(x.kind==='subject-class-training'||x.kind==='subject-class-recognition')?` · ${esc(x.result?.summary||x.phase||x.state)}`:verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!active&&!S.viewer&&Number(r.observation_revision||0)>Number(S.catalogObsRevision??-1)){invalidateVisibleAssets();await refreshObservations(true);S.obsRevision=String(r.observation_revision||S.obsRevision).split('-')[0]+'-'+assetEpoch}if(S.refreshSubjectClassStatus){const stamp=r.jobs.filter(job=>job.kind==='subject-class-training').map(job=>job.id+':'+job.state+':'+job.phase).join('|');if(stamp!==S.lastClassTrainingJob||S.classTrainingBusy){S.lastClassTrainingJob=stamp;await S.refreshSubjectClassStatus()}}return active||!!S.classTrainingBusy}
 
 // P.47: the job seeker is unemployed until there is work. One settling read is allowed;
 // polling exists only while queued/running jobs exist. Creating/stopping/dispatching work calls
@@ -1061,7 +1197,7 @@ async function refreshFilterPresets(){try{const r=await j('/api/filter-presets')
 function compactControls(){return S.mobile||matchMedia('(max-width:850px)').matches}
 function setControlMenu(open){if(open){setDrawer(false);$('#settingsDrawer')?.classList.remove('open');$('#settingsDrawer')?.setAttribute('aria-hidden','true')}$('#rail')?.classList.toggle('railOpen',open);$('#railToggle')?.setAttribute('aria-expanded',String(open));if($('#railBackdrop'))$('#railBackdrop').hidden=!open}
 function setDrawer(open){S.drawer=open;if(open&&compactControls()){$('#rail')?.classList.remove('railOpen');$('#railToggle')?.setAttribute('aria-expanded','false');$('#settingsDrawer')?.classList.remove('open');$('#settingsDrawer')?.setAttribute('aria-hidden','true')}$('#filterDrawer').classList.toggle('open',open);$('#filterDrawer').setAttribute('aria-hidden',String(!open));$('#filtersBtn').setAttribute('aria-expanded',String(open));if(compactControls()&&$('#railBackdrop'))$('#railBackdrop').hidden=!open&&!$('#rail')?.classList.contains('railOpen');if(open){refreshDiscovered();if(!compactControls())setTimeout(()=>$('#tagSearch').focus(),0)}}
-function clearSelected(){S.selected.clear();S.selectionAnchor=null;consumeSoftModifiers();refreshSelectionUI();$('#status').textContent='Selection cleared'}
+function clearSelected(){S.selectionRequest=(S.selectionRequest||0)+1;S.selected.clear();S.selectionAnchor=null;S.selectionAnchorMeta=null;consumeSoftModifiers();refreshSelectionUI();$('#status').textContent='Selection cleared'}
 $('#clearSelectedBtn').onclick=event=>{event.stopPropagation();clearSelected()};$('#filterCloseBtn').onclick=()=>setDrawer(false);$('#filterBackBtn').onclick=()=>setControlMenu(true);
 
 function updateFilterButton(){const active=[...S.magnets.values()].filter(m=>m.mode!=='0').length;$('#filtersBtn').textContent=active?`Filters (${active})`:'Filters'}
@@ -1131,7 +1267,7 @@ function moveRoot(path){
  if(S.scopeRoot&&!roots.some(r=>canonPath(r)===canonPath(S.scopeRoot)))roots.push(S.scopeRoot);
  return roots.map(canonPath).filter(r=>p===r||p.startsWith(r+'\\')).sort((a,b)=>b.length-a.length)[0]||null;
 }
-function patchMovedFiles(items){
+function patchMovedFiles(items,{leavePlaceholder=false}={}){
  if(!items?.length)return;
  const changes=new Map(items.filter(x=>x?.from&&x?.to).map(x=>[canonPath(x.from),x.to]));
  const translate=p=>changes.get(canonPath(p))||p,v=S.virtualGrid;
@@ -1144,7 +1280,7 @@ function patchMovedFiles(items){
   const from=f.path,to=changes.get(canonPath(from));if(!to)continue;
   const sourceRoot=moveRoot(from),targetRoot=moveRoot(to);
   const metadata=(f.observations||[]).map(o=>({...o,path:to}));
-  if(sourceRoot&&sourceRoot===targetRoot){
+  if(!leavePlaceholder&&sourceRoot&&sourceRoot===targetRoot){
    // Shared catalog and row references retain exactly the same slot and pixels.
    f.path=to;f.name=to.split(/[\\/]/).pop();f.observations=metadata;
    inPlace.add(canonPath(from));
@@ -1189,7 +1325,7 @@ function patchMovedFiles(items){
   }
  }
  S.selected=new Set([...S.selected].map(translate).filter(p=>S.mobile||S.files.some(f=>canonPath(f.path)===canonPath(p)&&!f._n8ForwardTo)));
- if(S.mobile){mobilePager?.movePaths(items,moveRoot);const destinations=new Set(items.map(item=>canonPath(item.to)));for(const f of S.files)if(changes.has(canonPath(f.path))||destinations.has(canonPath(f.path)))mobilePager?.remember(f);}
+ if(pagedBrowse()){mobilePager?.movePaths(items,moveRoot,{leavePlaceholder});const destinations=new Set(items.map(item=>canonPath(item.to)));for(const f of S.files)if(changes.has(canonPath(f.path))||destinations.has(canonPath(f.path)))mobilePager?.remember(f);}
  S.multiWork=S.multiWork.map(translate);if(S.selectionAnchor)S.selectionAnchor=translate(S.selectionAnchor);
  if(S.viewer&&changes.has(canonPath(S.viewer))){
   if(inPlace.has(canonPath(S.viewer)))openViewer(translate(S.viewer));
@@ -1202,12 +1338,20 @@ function patchMovedFiles(items){
  renderScopeFolders();refreshSelectionUI();
  $('#status').textContent=`File action complete · ${changes.size} path${changes.size===1?'':'s'} updated · grid position preserved`;
 }
+function releaseMovedSelection(items){
+ S.selectionRequest=(S.selectionRequest||0)+1;
+ const moved=new Set(items.flatMap(item=>[canonPath(item.from),canonPath(item.to)]));
+ for(const path of S.selected)if(moved.has(canonPath(path)))S.selected.delete(path);
+ if(S.selectionAnchor&&moved.has(canonPath(S.selectionAnchor)))S.selectionAnchor=null;
+ refreshSelectionUI();
+}
 async function optimisticFileAction(paths,work){
- try{const r=await work();patchMovedFiles(r.moved||[]);return r}
- catch(e){const completed=e.response?.detail?.completed;if(completed?.length)patchMovedFiles(completed);throw e}
+ try{const r=await work();const completed=r.moved||[];patchMovedFiles(completed,{leavePlaceholder:true});releaseMovedSelection(completed);return r}
+ catch(e){const completed=e.response?.detail?.completed;if(completed?.length){patchMovedFiles(completed,{leavePlaceholder:true});releaseMovedSelection(completed)}throw e}
 }
 function tombstonePaths(paths){
- const gone=new Set(paths.map(canonPath)),v=S.virtualGrid;if(S.mobile)mobilePager?.deletePaths(paths);
+ S.selectionRequest=(S.selectionRequest||0)+1;
+ const gone=new Set(paths.map(canonPath)),v=S.virtualGrid;if(pagedBrowse())mobilePager?.deletePaths(paths);
  // Record cache identities before flags change; the row objects stay in place.
  const retained=v.rows.map(spec=>({spec,key:rowKey(spec)}));
  for(const f of S.files)if(gone.has(canonPath(f.path)))f._n8Tombstone=true;
@@ -1221,16 +1365,40 @@ function tombstonePaths(paths){
  for(const p of [...S.selected])if(gone.has(canonPath(p)))S.selected.delete(p);
  if(S.viewer&&gone.has(canonPath(S.viewer)))closeViewer();
  // Update mounted and prepared cards in place. No render(), no rehome.
- const patch=c=>{const f=S.files.find(x=>canonPath(x.path)===canonPath(c.dataset.p));if(!f||!f._n8Tombstone)return;const x=virtualCardParts(f,S.virtualGrid.sm,S.virtualGrid.cm,parseFloat(c.style.width)||280);c.innerHTML=x.inner;c._n8Inner=x.inner;c.classList.remove('selected')};
+ const deletedFiles=new Map(S.files.filter(f=>gone.has(canonPath(f.path))).map(f=>[canonPath(f.path),f]));const patch=c=>{const f=deletedFiles.get(canonPath(c.dataset.p));if(!f||!f._n8Tombstone)return;const x=virtualCardParts(f,S.virtualGrid.sm,S.virtualGrid.cm,parseFloat(c.style.width)||280);c.innerHTML=x.inner;c._n8Inner=x.inner;c.classList.remove('selected')};
  document.querySelectorAll('#grid .card').forEach(patch);
  for(const entry of S.virtualGrid.rowReady.values())if(entry.node)entry.node.querySelectorAll('.card').forEach(patch);
  refreshSelectionUI();
 }
-async function deleteSelected(){if(!S.selected.size)return;if(!confirm(`Send ${S.selected.size} selected file(s) to Recycle Bin?`))return;const paths=[...S.selected],r=await post('/api/files/delete',{paths}),done=r.deleted||[];if(done.length)tombstonePaths(done);if(r.failed?.length)alert(`${r.failed.length} file(s) could not be deleted.`)}$('#deleteBtn').onclick=deleteSelected;
-let moveParent=null;async function moveBrowse(path){try{const d=await j(`/api/directories?path=${enc(path)}`);moveParent=d.parent;$('#movePath').value=d.path;$('#moveFolders').innerHTML=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');document.querySelectorAll('.moveFolder').forEach(x=>x.ondblclick=()=>moveBrowse(x.dataset.p));}catch(e){alert(e.message)}}
+const pendingDeletes=new Set();
+function paintDeletePending(card,pending){
+ card.querySelector('.fileActionPending')?.remove();if(!pending)return;
+ const badge=document.createElement('div');badge.className='fileActionPending';badge.textContent='Deleting…';badge.style.cssText='position:absolute;inset:0;display:grid;place-items:center;background:#0008;color:white;z-index:5;pointer-events:none';card.append(badge);
+}
+function showDeletePending(paths,pending){
+ const keys=new Set(paths.map(canonPath)),cards=new Set(document.querySelectorAll('#grid .card'));
+ for(const entry of S.virtualGrid.rowReady.values())if(entry.node)for(const card of entry.node.querySelectorAll('.card'))cards.add(card);
+ for(const card of cards)if(keys.has(canonPath(card.dataset.p)))paintDeletePending(card,pending);
+}
+
+async function deleteSelected(){
+ const paths=[...S.selected].filter(p=>!pendingDeletes.has(canonPath(p)));if(!paths.length)return;
+ if(!confirm(`Send ${paths.length} selected file(s) to Recycle Bin?`))return;
+ observationRefreshController?.abort();paths.forEach(p=>pendingDeletes.add(canonPath(p)));showDeletePending(paths,true);$('#status').textContent='Deleting '+paths.length+' file(s)…';
+ // Paint acknowledgement before any response handling or filesystem bookkeeping.
+ await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
+ try{const r=await post('/api/files/delete',{paths}),done=r.deleted||[];if(done.length)tombstonePaths(done);if(r.failed?.length)alert(`${r.failed.length} file(s) could not be deleted.`);$('#status').textContent=done.length+' file(s) deleted'+(r.failed?.length?' · '+r.failed.length+' failed':'')}
+ catch(error){alert(error.message)}finally{paths.forEach(p=>pendingDeletes.delete(canonPath(p)));showDeletePending(paths,false)}
+}$('#deleteBtn').onclick=deleteSelected;
+let moveParent=null,moveBrowseVersion=0;
+async function moveBrowse(path){
+ const version=++moveBrowseVersion;$('#moveConfirm').disabled=true;
+ try{const d=await j(`/api/directories?path=${enc(path)}`);if(version!==moveBrowseVersion)return false;moveParent=d.parent;$('#movePath').value=d.path;$('#moveFolders').innerHTML=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');document.querySelectorAll('.moveFolder').forEach(x=>x.ondblclick=()=>moveBrowse(x.dataset.p));$('#moveConfirm').disabled=false;return true}catch(e){if(version===moveBrowseVersion)alert(e.message);return false}
+}
+
 async function refreshFileHistory(show=false){try{const r=await j('/api/files/history?limit=20'),box=$('#fileHistory');if(!box)return;if(show)box.hidden=!box.hidden;box.innerHTML=(r.history||[]).map(h=>{const p=h.payload||{},detail=h.op==='mkdir'?p.path:(p.items||[]).map(x=>typeof x==='string'?x:(x.from+' → '+x.to)).join('<br>');return `<div><b>${esc(h.op)}</b>${h.undone?' · undone':''}${h.error?' · '+esc(h.error):''}<br>${esc(detail||'')}</div>`}).join('')||'No filesystem history.'}catch(e){alert(e.message)}}
 $('#undoFileBtn').onclick=async()=>{try{await post('/api/files/undo',{});await load(S.path);await refreshFileHistory()}catch(e){alert(e.message)}};$('#fileHistoryBtn').onclick=()=>refreshFileHistory(true);
-$('#moveBtn').onclick=async()=>{if(!S.selected.size)return;$('#moveCount').textContent=`${S.selected.size.toLocaleString()} file${S.selected.size===1?'':'s'} selected`;await moveBrowse(S.path||S.scopeRoot||'C:\\');$('#moveDialog').showModal()};$('#moveUp').onclick=()=>moveParent&&moveBrowse(moveParent);$('#moveGo').onclick=()=>moveBrowse($('#movePath').value);$('#movePath').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();moveBrowse(e.target.value)}};$('#moveConfirm').onclick=async()=>{const d=$('#movePath').value;if(!d)return;const paths=[...S.selected];$('#moveDialog').close();await optimisticFileAction(paths,()=>post('/api/files/move',{paths,destination:d}))};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0],old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});load(S.path)};
+$('#moveBtn').onclick=async()=>{if(!S.selected.size)return;$('#moveCount').textContent=`${S.selected.size.toLocaleString()} file${S.selected.size===1?'':'s'} selected`;$('#moveFolders').textContent='Loading folders…';$('#moveConfirm').disabled=true;$('#moveDialog').showModal();await moveBrowse(S.path||S.scopeRoot||'C:\\')};$('#moveUp').onclick=()=>moveParent&&moveBrowse(moveParent);$('#moveGo').onclick=()=>moveBrowse($('#movePath').value);$('#movePath').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();moveBrowse(e.target.value)}};$('#moveConfirm').onclick=async()=>{const d=$('#movePath').value;if(!d)return;const paths=[...S.selected];$('#moveDialog').close();await optimisticFileAction(paths,()=>post('/api/files/move',{paths,destination:d}))};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0],old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});load(S.path)};
 $('#rescanModelsBtn').onclick=()=>refreshModels(true);$('#sweepShownBtn').onclick=sweepShown;
 async function qualitySeenChoice(paths){
  const k=await post('/api/mv/quality-known',{paths,batch_size:16,force:false});
@@ -1484,27 +1652,50 @@ const watchedComfyBatches=new Set();
 async function watchComfyBatch(id){if(!id||watchedComfyBatches.has(id))return;watchedComfyBatches.add(id);try{for(;;){await new Promise(r=>setTimeout(r,1000));let b;try{b=await j(`/api/comfy/recovery-batch/${enc(id)}`)}catch(e){if(String(e.message).includes('404'))return;continue}if(!b.complete)continue;if(batchIntersectsCurrentView(b))await automaticGridRefresh();return}}finally{watchedComfyBatches.delete(id)}}
 
 async function returnToOrigin(){
- if(S.mobile&&mobilePager){S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;const pager=mobilePager,snapshot=await pager.focus(0);if(snapshot&&pager===mobilePager)await applyMobileSnapshot(snapshot,snapshot.files[0]?.path,pager);return;}
+ if(pagedBrowse()&&mobilePager){S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;const pager=mobilePager,snapshot=await pager.focus(0);if(snapshot&&pager===mobilePager)await applyMobileSnapshot(snapshot,snapshot.files[0]?.path,pager);return;}
  const v=S.virtualGrid;if(!v.rows.length)return;
  gridActivity('return-to-origin');v.cursor=0;v.scoutDir=0;v.scoutExtra=0;
  prepareNeighborhood();await prepareRow(0);paintRing();
  $('#status').textContent='Returned to origin';
 }
 const originButton=$('#returnToOriginBtn');if(originButton)originButton.onclick=returnToOrigin;
+let redrawGeneration=0;
+async function reconcileRedrawAssets(generation,files,root){
+ const valid=()=>generation===redrawGeneration&&S.files===files&&S.scopeRoot===root;
+ const wanted=new Set();
+ for(let i=0;i<files.length;i+=1000){
+  if(!valid())return;
+  for(const f of files.slice(i,i+1000))if(!f._n8Tombstone&&!f._n8ForwardTo)wanted.add(thumbUrl(f));
+  await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ let count=0;
+ for(const [url,entry] of thumbAssets){
+  if(!valid())return;
+  if(!wanted.has(url)&&entry.state!=='loading'){
+   thumbAssets.delete(url);if(entry.objectUrl)URL.revokeObjectURL(entry.objectUrl);
+  }
+  if(++count%100===0)await new Promise(resolve=>setTimeout(resolve,0));
+ }
+ if(valid())renderScopeFolders();
+}
 async function redrawGrid(){
- const a=$('#redrawGridBtn'),b=$('#orderingRedrawGridBtn'),tempHome=tempHomePath(),shown=visibleFiles();
- if(a)a.disabled=true;if(b)b.disabled=true;$('#status').textContent=`Redrawing current grid… ${shown.length.toLocaleString()} shown.`;
+ const a=$('#redrawGridBtn'),b=$('#orderingRedrawGridBtn'),home=tempHomePath(),generation=++redrawGeneration;
+ if(a)a.disabled=true;if(b)b.disabled=true;
  try{
-  // P.89: Farm tombstones are useful until the operator asks for a re-grid. At that point
-  // the condemned cards leave the working set completely; temp_home already points at the
-  // first surviving real card, so the archive-cleanup loop advances without a visual jump.
-  const farmed=new Set(S.files.filter(f=>f._n8Tombstone).map(f=>canonPath(f.path)));
-  if(farmed.size)S.files=S.files.filter(f=>!farmed.has(canonPath(f.path)));
-  const survivors=visibleFiles();
-  forgetCurrentThumbAssets(shown);S.gridRedrawEpoch=(S.gridRedrawEpoch||0)+1;
-  S.virtualGrid.rowReady=new Map();S.virtualGrid.prepGeneration++;invalidateRingLayout();renderScopeFolders();render();
-  requestAnimationFrame(()=>{pinTempHome(tempHome);paintRing()});
-  $('#status').textContent=`Grid redrawn · ${survivors.length.toLocaleString()} shown · ${farmed.size.toLocaleString()} farmbound purged`;
+  // Compact only on explicit redraw; preserve valid prefabs and decoded thumbnails.
+  S.files=S.files.filter(f=>!f._n8Tombstone);
+  const files=S.files,root=S.scopeRoot;
+  invalidateRingLayout();render();pinTempHome(home);paintRing();
+  const v=S.virtualGrid,pool=ringPool(virtualGridLayout(v.files),v.cursor),ready=[];
+  for(let i=0;i<pool.count;i++)ready.push(prepareRow(pool.first+i));
+  await Promise.all(ready);
+  if(generation!==redrawGeneration||S.files!==files||S.scopeRoot!==root)return;
+  paintRing();
+  $('#status').textContent=`Grid redrawn · ${v.files.length.toLocaleString()} shown`;
+  // Give mounted cards a paint before any archive-wide browser bookkeeping.
+  requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(()=>{
+   reconcileRedrawAssets(generation,files,root).catch(e=>console.warn('[N8Vision] Redraw cleanup:',e));
+  },0)));
  }catch(e){alert(e.message)}finally{if(a)a.disabled=false;if(b)b.disabled=false}
 }
 const redrawA=$('#redrawGridBtn'),redrawB=$('#orderingRedrawGridBtn');if(redrawA)redrawA.onclick=redrawGrid;if(redrawB)redrawB.onclick=redrawGrid;
@@ -1666,7 +1857,7 @@ function touchRingStep(offset,rowHeight){return -Math.sign(offset)*Math.round(Ma
   if(!moved){S.touchRingBusy=false;reset();if(S.mobileReflowPending)setTimeout(reflowMobileColumns,0);return;}
   S.suppressClickUntil=performance.now()+450;
   if(!n||!step){S.touchRingBusy=false;reset();scheduleRingPaint();return;}
-  const target=S.mobile?Math.max(0,Math.min(n-1,v.cursor+step)):mod(v.cursor+step,n),rows=v.rows,files=v.files,generation=v.prepGeneration;
+  const target=pagedBrowse()?Math.max(0,Math.min(n-1,v.cursor+step)):mod(v.cursor+step,n),rows=v.rows,files=v.files,generation=v.prepGeneration;
   const layout=virtualGridLayout(files),pool=ringPool(layout,target);
   const required=Array.from({length:pool.count},(_,k)=>S.mobile?pool.first+k:mod(pool.first+k,n));
   for(const ri of required)v.prepDesired.add(rowKey(rows[ri]));
@@ -1701,3 +1892,26 @@ if(['127.0.0.1','localhost','[::1]'].includes(location.hostname)){
 }
 
 const removedDetectorCleanupBtn=$('#removedDetectorCleanupBtn');if(removedDetectorCleanupBtn)removedDetectorCleanupBtn.onclick=async()=>{try{const include_reviewed=!!$('#cleanupReviewedDetectors')?.checked;const preview=await j('/api/maintenance/removed-detectors?include_reviewed='+include_reviewed);if(!preview.observations)return alert(`No removable observations found. ${preview.protected} reviewed or owned records preserved.`);const names=preview.models.map(m=>`${m.model}: ${m.observations}`).join('\n');if(!confirm(`Delete ${preview.observations} observations from missing local detectors?\n\n${names}\n\n${preview.protected} reviewed or owned records will be preserved. ${include_reviewed?'Reviewed/owned detector records will also be deleted, and live ownership links detached. ':''}Disabled detectors and unavailable drives are preserved. Images and committed teaching lessons are untouched.`))return;const result=await post('/api/maintenance/removed-detectors',{token:preview.token,include_reviewed});invalidateVisibleAssets();S.obsRevision=String(result.revision);await refreshObservations(true);await refreshDiscovered();$('#status').textContent=`Removed ${result.deleted} observations from uninstalled detectors`;}catch(error){alert(error.message)}};
+
+// Desktop can use the mobile-style bounded metadata window without mobile layout.
+if(!S.mobile){
+ const settings=$('#settingsDrawer'),section=document.createElement('section'),heading=document.createElement('h3');heading.textContent='Library loading';
+ const enabled=document.createElement('input');enabled.type='checkbox';enabled.checked=!!S.desktopWindowed;
+ const enabledLabel=document.createElement('label');enabledLabel.className='check';enabledLabel.append(enabled,document.createTextNode(' Load desktop library in windows'));
+ const size=document.createElement('input');size.type='number';size.min='1000';size.max='100000';size.step='1000';size.value=String(S.desktopWindowSize);
+ const sizeLabel=document.createElement('label');sizeLabel.textContent='Pre-cached image zone (steps of 1,000)';sizeLabel.append(size);
+ const note=document.createElement('p');note.className='tiny';note.textContent='Loads this many images around your position and shifts by 500 after crossing the midpoint. Search, filters, sorting and shown-image actions use only this window. Automatic shifts follow Filesystem ascending; other sorts use the 500-image controls. Off loads the whole catalog. This browser remembers the setting.';
+ const apply=document.createElement('button');apply.textContent='Apply library loading';
+ apply.onclick=async()=>{const value=Number(size.value);if(!Number.isInteger(value)||value<1000||value>100000||value%1000)return alert('Choose a multiple of 1,000 between 1,000 and 100,000.');
+  const anchor=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f;S.windowRestorePosition=anchor?anchor._n8ArchiveIndex??Math.max(0,S.files.findIndex(f=>f.path===anchor.path)):0;S.windowRestoreAnchor=anchor?.path||null;
+  S.desktopWindowed=enabled.checked;S.desktopWindowSize=value;localStorage.setItem('n8vision.desktopWindowed',enabled.checked?'1':'0');localStorage.setItem('n8vision.desktopWindowSize',String(value));$('#mobilePagingInfo').hidden=!enabled.checked;windowSteps.hidden=!enabled.checked;apply.disabled=true;
+  try{if(S.scopeRoot)await load(S.scopeRoot,true,'window-setting')}finally{apply.disabled=false}
+ };
+ section.append(heading,enabledLabel,sizeLabel,note,apply);
+ const library=[...(settings?.querySelectorAll(':scope > section')||[])].find(el=>el.querySelector('h3')?.textContent.trim()==='Library');
+ if(library){const title=library.querySelector('h3');title.after(enabledLabel,sizeLabel,note,apply);settings.querySelector('.settingsHead')?.after(library)}else settings?.querySelector('.settingsHead')?.after(section);
+
+ const windowSteps=document.createElement('div');windowSteps.className='buttonGrid';windowSteps.hidden=!S.desktopWindowed;
+ for(const delta of [-500,500]){const button=document.createElement('button');button.textContent=delta<0?'Previous 500':'Next 500';button.onclick=async()=>{if(!mobilePager||S.viewer||S.mobileWindowBusy)return;const pager=mobilePager,position=Math.max(0,(S.mobileNavigationPosition??pager.position)+delta);button.disabled=true;try{const snapshot=await pager.focus(position);if(snapshot&&pager===mobilePager){const anchor=snapshot.files.find(f=>f._n8ArchiveIndex>=position)||snapshot.files.at(-1);S.mobileNavigationPosition=anchor?._n8ArchiveIndex??position;await applyMobileSnapshot(snapshot,anchor?.path,pager)}}catch(error){alert(error.message)}finally{button.disabled=false}};windowSteps.append(button)}
+ $('#mobilePagingInfo')?.after(windowSteps);if(S.desktopWindowed)$('#mobilePagingInfo').hidden=false;
+}
