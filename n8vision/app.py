@@ -40,7 +40,7 @@ async def edition_capabilities(request:Request,call_next):
  return await call_next(request)
 
 @app.get('/api/edition')
-def edition_info():return {**EDITION,'version':'I.2t-l-Z1w','subject_intelligence_available':EDITION['subject_intelligence']}
+def edition_info():return {**EDITION,'version':'I.2t-l-Z1y','subject_intelligence_available':EDITION['subject_intelligence']}
 
 LOCAL_ATTENTION=0
 @app.get('/api/instance')
@@ -1366,13 +1366,29 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    if sess:sess['error']=f'{type(e).__name__}: {e}';sess['complete']=True;sess['updated']=time.monotonic();sess['completed_at']=time.monotonic()
 
 
+DIRECTORY_TREE_CACHE={}
+DIRECTORY_TREE_LOCK=threading.Lock()
 @app.get('/api/directories')
 def directories(path:str=Query(...)):
- p=norm(path)
- if not p.exists() or not p.is_dir():raise HTTPException(404,'Directory not found')
- try:dirs=sorted((x for x in p.iterdir() if x.is_dir()),key=lambda x:x.name.casefold())
+ p=norm(path);key=str(p).casefold()
+ try:
+  st=p.stat()
+  if not p.is_dir():raise HTTPException(404,'Directory not found')
+  signature=(st.st_dev,st.st_ino,st.st_mtime_ns,st.st_ctime_ns)
+  with DIRECTORY_TREE_LOCK:
+   cached=DIRECTORY_TREE_CACHE.get(key)
+   if cached and cached[0]==signature:return cached[1]
+   dirs=sorted((x for x in p.iterdir() if x.is_dir()),key=lambda x:x.name.casefold())
+   result={'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs]}
+   after=p.stat()
+   if signature==(after.st_dev,after.st_ino,after.st_mtime_ns,after.st_ctime_ns):
+    if len(DIRECTORY_TREE_CACHE)>=2048:DIRECTORY_TREE_CACHE.pop(next(iter(DIRECTORY_TREE_CACHE)))
+    DIRECTORY_TREE_CACHE[key]=(signature,result)
+   return result
+ except FileNotFoundError:
+  with DIRECTORY_TREE_LOCK:DIRECTORY_TREE_CACHE.pop(key,None)
+  raise HTTPException(404,'Directory not found')
  except PermissionError:raise HTTPException(403,'Permission denied')
- return {'path':str(p),'parent':str(p.parent) if p.parent!=p else None,'directories':[{'name':x.name,'path':str(x)} for x in dirs]}
 
 @app.get('/api/browse/start')
 def browse_start(path:str=Query(...),recursive:bool=False,tx:str=Query(''),mobile:bool=False,windowed:bool=False,previous_tx:str=Query('')):

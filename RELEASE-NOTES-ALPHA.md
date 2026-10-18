@@ -1,31 +1,28 @@
-# N8Vision alpha I.2t-l-Z1w
+# N8Vision alpha I.2t-l-Z1y
 
-Complete source release, consolidating the tested patch stack since Z1a.
+Update over Z1w, including both Z1x and Z1y. Complete download; no patch stacking.
 
-- Faster library startup and optional configurable desktop browsing windows.
-- Completed rows appear without waiting for offscreen buffer rows. Redraw reuses
-  valid thumbnails, then performs browser cache/folder bookkeeping in background.
-- Responsive selection and filesystem actions; all successful moves leave
-  hand-truck markers and release moved selections. Rename remains in place.
-- Stable inclusive selection with deleted/moved placeholders excluded, including
-  path-only selection across unloaded windows in unfiltered Filesystem order.
-- Filesystem ordering, collapsible menu sections, and training diagnostics drawer.
-- Split subject separation/naming, guided subject splitting, improved class
-  training/validation diagnostics, independent class admission and recognition refresh.
-- Mobile Back closes the topmost menu, inspector, mask editor or dialog first.
+## Latest fixes
 
-One download; Lite, Blurred and Full share one environment. Install only the
-capacity you need. Optional models retain their upstream licenses/access rules.
+- Inclusive selection follows the browsed direction across the desktop ring origin.
+- Move destination folders appear immediately from a visited-folder cache, with
+  validation in the background. The picker remembers the last destination.
+- The server reuses folder listings until their directory signature changes;
+  first visits still enumerate. Directory timestamps can also change on file actions.
+- Move batches release selection immediately and execute sequentially, letting you
+  gather the next batch. Completed moves receive hand-truck markers; failures are
+  reported. The queue lives in the browser session: keep the tab open until done.
 
-Windows: Python 3.14 with py launcher; Git for heavier profiles. Extract to an
-empty folder, run install.cmd, then N8Vision.cmd. Existing users: stop Vision,
-replace source while preserving .venv/data/cache/models/settings, restart and
-refresh browsers. Do not run the application from this publishing checkout.
+## Install or update
 
-Verification: source syntax, controlled archive-window/range regression tests,
-frontend VM checks from individual patches, clean-package manifest/CRC checks.
-Developer confirmed instant redraw in live use. Latest mobile Back behavior and
-fresh installation across hardware combinations need broader testing. No claim
-of universal model accuracy or measured startup timing.
+Windows/Python 3.14. New users: extract to an empty folder, run install.cmd and
+N8Vision.cmd. Existing users: stop Vision and replace application source while
+preserving .venv, data, cache, models and settings; restart and refresh browsers.
 
-Report bugs: https://github.com/Kokunekosan/N8Vision/issues
+Checks: frontend/Python syntax, controlled ring direction tests, directory cache
+reuse/change detection using real temporary folders, browser queue/coalescing/
+failure recovery simulations, ZIP entry/CRC/manifest checks. Maintainer reports
+improved destination-picker responsiveness in live use. Broader device testing
+remains welcome. No model weights, credentials or personal archive included.
+
+Bug reports: https://github.com/Kokunekosan/N8Vision/issues

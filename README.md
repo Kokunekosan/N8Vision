@@ -5,7 +5,7 @@
 A free, open-source image library for browsing generated images, pruning files,
 inspecting metadata and preparing selected subjects for editing.
 
-**Official alpha: I.2t-l-Z1w.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1w).
+**Official alpha: I.2t-l-Z1y.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1y).
 No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
 
 ## Install and launch
@@ -53,6 +53,17 @@ collapsible menu sections, and mobile Back dismissing the active panel.
 Desktop window size is configured in Settings / Library, in steps of 1,000.
 Cross-window inclusive selection is supported for unfiltered Filesystem order;
 an unavailable anchor in other views is reported rather than guessed.
+
+## Latest fixes
+
+- Inclusive selection follows the browsed direction across the desktop ring origin.
+- Move destination folders appear immediately from a visited-folder cache, with
+  validation in the background. The picker remembers the last destination.
+- The server reuses folder listings until their directory signature changes;
+  first visits still enumerate. Directory timestamps can also change on file actions.
+- Move batches release selection immediately and execute sequentially, letting you
+  gather the next batch. Completed moves receive hand-truck markers; failures are
+  reported. The queue lives in the browser session: keep the tab open until done.
 
 ## Subject tools: selected images, on demand
 

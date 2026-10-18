@@ -1,0 +1,22 @@
+Z1y: instant reuse of visited Move destination folder lists.
+Browser directory cache paints a cached destination immediately, enabling confirm
+before background validation. Unchanged validation does not replace the list.
+Repeated in-flight folder requests coalesce. Last chosen destination is reused.
+Stale navigation responses cannot replace a newly chosen folder. Failed validation
+invalidates the cached entry and disables confirmation for that view.
+Server caches each enumerated child-folder list against directory identity and
+mtime/ctime; unchanged folders require cheap stat checks, not another listing.
+Changed lists refresh, missing destinations fail, cache bounded to 2048 nodes.
+First visit still requires enumeration. Directory mtime can change on file actions
+as well as folder changes. No full-archive scan or rebuild added.
+Move batches capture paths and destination, release selection immediately and run
+sequentially while the next batch can be gathered. Pending sources cannot be
+individually selected, range-selected, deleted or renamed through these handlers.
+Only completed moves get hand-truck markers; partial errors preserve completed
+work and report failure. Queue is browser-session memory, not crash-persistent;
+keep the tab open until moves finish. Browser cache lasts for the page session.
+Tests: real temporary-folder unchanged cache skips enumeration, new subfolder
+refreshes it, missing folder rejected; VM cache coalescing, serial queue snapshot/
+deduplication/failure recovery, JS/Python syntax. Live destination latency untested.
+Apply over Z1x: stop Vision, extract, restart and refresh. ZIP reconstruction/CRC/
+entry bytes/SHA256 verified. Live installation/archive and GitHub unchanged.

@@ -1,0 +1,15 @@
+Z1x: inclusive selection follows unwrapped desktop ring positions.
+Confirmed fault: numeric min/max path interval ignored the seam between archive
+end and start. Track signed natural row-boundary crossings for wheel/vector and
+touch movement; lift clicked file position into the displayed ring cycle.
+Anchor stores that coordinate and ring/view identity. Inclusive range walks the
+signed interval, capped at one whole catalog, excluding deleted/forward markers.
+Long nonwrapping intervals remain long; no shortest-arc guessing. Direct archive
+jumps/Return to Origin reset ring identity. Layout/view changes fall back to the
+current linear displayed sequence. Bounded/mobile browse remains linear and its
+unloaded path-range endpoint and stale-response guards remain unchanged.
+VM tests: both seam directions, actual signed row movement, seam within displayed
+pool, long ordinary range, linear fallback, marker exclusion and missing anchor;
+frontend/Python syntax. Existing 50k server range/demand-page tests rerun.
+Live ring browsing not tested. Apply over Z1w; stop/restart Vision and refresh.
+ZIP reconstruction/entry bytes/CRC/SHA256 verified. Live/GitHub unchanged.

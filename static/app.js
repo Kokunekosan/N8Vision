@@ -60,7 +60,7 @@ function markEditionControls(){
 function applyEdition(info){
  S.edition=info.edition;S.capabilities=info;
  document.body.dataset.edition=info.edition;document.body.dataset.inference=String(!!info.inference);document.body.dataset.processing=String(!!info.processing);document.body.classList.remove('editionPending');
- const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z1w')+' · '+info.name;
+ const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z1y')+' · '+info.name;
  if(!info.processing)setMode('explore');
  document.body.dataset.subjectIntelligence=String(!!info.subject_intelligence);
  if(info.subject_intelligence&&!document.getElementById('subjectSeparateBtn')){
@@ -990,7 +990,7 @@ function moveRingRows(delta){
  const v=S.virtualGrid,n=v.rows.length;if(!n||!delta)return;const dir=Math.sign(delta),target=pagedBrowse()?Math.max(0,Math.min(n-1,v.cursor+dir)):mod(v.cursor+dir,n);
  // Row-at-a-time on purpose. If the next completed prefab is not in the drawer, stop at the frontier.
  if(!rowReady(target)){prepareRow(target);prepareNeighborhood();return}
- v.cursor=target;reportRingMovement(dir);paintRing();
+ recordSelectionRingMove(v.cursor,dir);v.cursor=target;reportRingMovement(dir);paintRing();
 }
 function renderVirtualGrid(){paintRing()}
 function render(){
@@ -1022,8 +1022,8 @@ function updateArchiveNavigator(){
  const visible=[...S.archiveAnchors].map(p=>({p,row:currentAnchorRow(p)})).filter(x=>x.row>=lo&&x.row<=hi);
  const last=rootLastLook.get(rootCatalogKey(S.scopeRoot,S.catalogRecursive));
  const lastRow=last?currentAnchorRow(last):-1;
- if(lastRow>=lo&&lastRow<=hi){const marker=document.createElement('button');marker.type='button';marker.className='archiveMark n8LastLook';marker.style.top=`${100*(lastRow-lo)/span}%`;marker.style.background='#e6aa4a';marker.style.borderColor='#fff0bf';marker.style.zIndex='2';marker.title='Last Look · '+last;marker.setAttribute('aria-label','Return to last look');marker.onclick=e=>{e.stopPropagation();prepareRow(lastRow).then(()=>{S.virtualGrid.cursor=lastRow;paintRing()})};marks.appendChild(marker)}
- for(const a of visible){const b=document.createElement('button');b.type='button';b.className='archiveMark';b.style.top=`${100*(a.row-lo)/span}%`;b.title=a.p;b.onclick=e=>{e.stopPropagation();gridActivity('anchor-teleport');prepareRow(a.row).then(()=>{S.virtualGrid.cursor=a.row;paintRing()})};b.onmouseenter=()=>showArchivePreview(a.p,b);b.onmouseleave=hideArchivePreview;marks.appendChild(b)}
+ if(lastRow>=lo&&lastRow<=hi){const marker=document.createElement('button');marker.type='button';marker.className='archiveMark n8LastLook';marker.style.top=`${100*(lastRow-lo)/span}%`;marker.style.background='#e6aa4a';marker.style.borderColor='#fff0bf';marker.style.zIndex='2';marker.title='Last Look · '+last;marker.setAttribute('aria-label','Return to last look');marker.onclick=e=>{e.stopPropagation();prepareRow(lastRow).then(()=>{S.virtualGrid.selectionRing=null;S.virtualGrid.cursor=lastRow;paintRing()})};marks.appendChild(marker)}
+ for(const a of visible){const b=document.createElement('button');b.type='button';b.className='archiveMark';b.style.top=`${100*(a.row-lo)/span}%`;b.title=a.p;b.onclick=e=>{e.stopPropagation();gridActivity('anchor-teleport');prepareRow(a.row).then(()=>{S.virtualGrid.selectionRing=null;S.virtualGrid.cursor=a.row;paintRing()})};b.onmouseenter=()=>showArchivePreview(a.p,b);b.onmouseleave=hideArchivePreview;marks.appendChild(b)}
  track.classList.toggle('zoomed',!!S.archiveNavZoom);
 }
 function showArchivePreview(path,mark){
@@ -1031,7 +1031,7 @@ function showArchivePreview(path,mark){
 }
 function hideArchivePreview(){const p=$('#archivePreview');if(p)p.hidden=true}
 function teleportArchive(frac){gridActivity('ring-teleport');
- const rows=S.virtualGrid.rows;if(!rows.length)return;const [lo,hi]=archiveNavRange(),target=Math.max(lo,Math.min(hi,Math.round(lo+frac*(hi-lo))));prepareRow(target).then(()=>{S.virtualGrid.cursor=target;if(pagedBrowse()){S.mobileNavigationDirty=true;S.mobileNavigationPosition=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f?._n8ArchiveIndex;}paintRing()});
+ const rows=S.virtualGrid.rows;if(!rows.length)return;const [lo,hi]=archiveNavRange(),target=Math.max(lo,Math.min(hi,Math.round(lo+frac*(hi-lo))));prepareRow(target).then(()=>{S.virtualGrid.selectionRing=null;S.virtualGrid.cursor=target;if(pagedBrowse()){S.mobileNavigationDirty=true;S.mobileNavigationPosition=S.virtualGrid.rows[S.virtualGrid.cursor]?.[0]?.f?._n8ArchiveIndex;}paintRing()});
 }
 function setupArchiveNavigator(){
  const grid=$('#grid'),track=$('#archiveTrack'),vector=$('#archiveVector'),add=$('#archiveAnchorAdd'),whole=$('#archiveWhole');if(!grid||!track||!vector)return;
@@ -1047,14 +1047,32 @@ function setupArchiveNavigator(){
  vector.addEventListener('pointerup',stop);vector.addEventListener('pointercancel',stop);
 }
 function refreshSelectionUI(changed=null){const cards=changed?Array.from(changed,p=>document.querySelector(`#grid .card[data-p=\"${CSS.escape(p)}\"]`)).filter(Boolean):document.querySelectorAll('#grid .card');cards.forEach(c=>c.classList.toggle('selected',S.selected.has(c.dataset.p)));$('#selCount').textContent=S.selected.size;const clear=$('#clearSelectedBtn');if(clear)clear.disabled=!S.selected.size;const shown=S.virtualGrid.files.length;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${shown.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`}
+function ringSelectionPosition(path){
+ if(pagedBrowse())return null;
+ const v=S.virtualGrid,n=v.rows.length,index=v.files.findIndex(f=>f.path===path);
+ if(!n||index<0)return null;
+ if(v.selectionRing?.rows!==v.rows)v.selectionRing={rows:v.rows,turn:0};
+ const row=v.rows.findIndex(spec=>spec.some(x=>x.f.path===path));
+ const logical=v.firstLogical+mod(row-v.firstLogical,n);
+ return {ring:v.selectionRing,position:index+(v.selectionRing.turn+Math.floor(logical/n))*v.files.length};
+}
+function recordSelectionRingMove(from,step){
+ const v=S.virtualGrid,n=v.rows.length;
+ if(pagedBrowse()||!n)return;
+ if(v.selectionRing?.rows!==v.rows)v.selectionRing={rows:v.rows,turn:0};
+ v.selectionRing.turn+=Math.floor((from+step)/n);
+}
 function selectionViewKey(){return JSON.stringify([S.path,S.scopeRoot,S.scopeRecursive,[...S.scopeSelections||[]],S.sortKey,S.sortDir,$('#search').value,$('#minConfidence').value,[...S.magnets.values()].map(m=>[m.key,m.mode,m.op,m.count])])}
 function select(p,e={}){
  if(S.suppressClickUntil&&performance.now()<S.suppressClickUntil)return;
+ if(moveQueue.has(p)){$('#status').textContent='This image is already queued for moving';return;}
  observationRefreshController?.abort();const request=S.selectionRequest=(S.selectionRequest||0)+1,shift=!!(e.shiftKey||S.softShift),changed=new Set();
  if(shift){e.preventDefault?.();window.getSelection()?.removeAllRanges()}
  if(shift&&S.selectionAnchor){
-  const range=inclusiveCatalogRange(S.virtualGrid.files,S.selectionAnchor,p);
-  if(range){for(const path of range){S.selected.add(path);changed.add(path)}}
+  const anchorRing=S.selectionAnchorMeta?.ringPosition,targetRing=ringSelectionPosition(p);
+  const positions=anchorRing&&targetRing&&anchorRing.ring===targetRing.ring&&S.selectionAnchorMeta.key===selectionViewKey()?{anchor:anchorRing.position,target:targetRing.position}:null;
+  const range=inclusiveCatalogRange(S.virtualGrid.files,S.selectionAnchor,p,positions);
+  if(range){for(const path of range){if(moveQueue.has(path))continue;S.selected.add(path);changed.add(path)}}
   else{
    const anchor=S.selectionAnchorMeta,target=S.files.find(f=>f.path===p),key=selectionViewKey();
    const plain=S.sortKey==='none'&&!S.semantic&&!S.compare&&!$('#search').value.trim()&&![...S.magnets.values()].some(m=>m.mode!=='0')&&!(S.scopeSelections?.size);
@@ -1063,14 +1081,14 @@ function select(p,e={}){
     $('#status').textContent='Selecting inclusive range…';
     j(`/api/browse/range?tx=${enc(tx)}&first=${lo}&last=${hi}`).then(result=>{
      if(S.selectionRequest!==request||mobilePager!==pager||S.mobileBrowseTx!==tx||S.semantic||S.compare||selectionViewKey()!==key)return;
-     for(const item of result.paths){const file=pager.restore({path:item.path,_n8ArchiveIndex:item.index});if(!file._n8Tombstone&&!file._n8ForwardTo)S.selected.add(file.path)}
+     for(const item of result.paths){const file=pager.restore({path:item.path,_n8ArchiveIndex:item.index});if(!file._n8Tombstone&&!file._n8ForwardTo&&!moveQueue.has(file.path))S.selected.add(file.path)}
      refreshSelectionUI();$('#status').textContent='Inclusive range selected · '+result.paths.length.toLocaleString()+' archive positions';
     }).catch(error=>{if(S.selectionRequest===request)$('#status').textContent='Range selection failed: '+error.message});
    }else $('#status').textContent='Selection anchor is outside this view. Clear selection or choose the anchor again; no range guessed.';
   }
  }else{
   S.selected.has(p)?S.selected.delete(p):S.selected.add(p);changed.add(p);S.selectionAnchor=p;
-  const file=S.files.find(f=>f.path===p);S.selectionAnchorMeta={tx:S.mobileBrowseTx,index:file?._n8ArchiveIndex,key:selectionViewKey()};
+  const file=S.files.find(f=>f.path===p);S.selectionAnchorMeta={tx:S.mobileBrowseTx,index:file?._n8ArchiveIndex,key:selectionViewKey(),ringPosition:ringSelectionPosition(p)};
  }
  consumeSoftModifiers();refreshSelectionUI(changed);
 }
@@ -1382,7 +1400,7 @@ function showDeletePending(paths,pending){
 }
 
 async function deleteSelected(){
- const paths=[...S.selected].filter(p=>!pendingDeletes.has(canonPath(p)));if(!paths.length)return;
+ const paths=[...S.selected].filter(p=>!pendingDeletes.has(canonPath(p))&&!moveQueue.has(p));if(!paths.length)return;
  if(!confirm(`Send ${paths.length} selected file(s) to Recycle Bin?`))return;
  observationRefreshController?.abort();paths.forEach(p=>pendingDeletes.add(canonPath(p)));showDeletePending(paths,true);$('#status').textContent='Deleting '+paths.length+' file(s)…';
  // Paint acknowledgement before any response handling or filesystem bookkeeping.
@@ -1390,15 +1408,37 @@ async function deleteSelected(){
  try{const r=await post('/api/files/delete',{paths}),done=r.deleted||[];if(done.length)tombstonePaths(done);if(r.failed?.length)alert(`${r.failed.length} file(s) could not be deleted.`);$('#status').textContent=done.length+' file(s) deleted'+(r.failed?.length?' · '+r.failed.length+' failed':'')}
  catch(error){alert(error.message)}finally{paths.forEach(p=>pendingDeletes.delete(canonPath(p)));showDeletePending(paths,false)}
 }$('#deleteBtn').onclick=deleteSelected;
-let moveParent=null,moveBrowseVersion=0;
-async function moveBrowse(path){
- const version=++moveBrowseVersion;$('#moveConfirm').disabled=true;
- try{const d=await j(`/api/directories?path=${enc(path)}`);if(version!==moveBrowseVersion)return false;moveParent=d.parent;$('#movePath').value=d.path;$('#moveFolders').innerHTML=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');document.querySelectorAll('.moveFolder').forEach(x=>x.ondblclick=()=>moveBrowse(x.dataset.p));$('#moveConfirm').disabled=false;return true}catch(e){if(version===moveBrowseVersion)alert(e.message);return false}
+let moveParent=null,moveBrowseVersion=0,lastMoveDestination=null;
+const moveDirectoryCache=createMoveDirectoryCache({fetch:path=>j(`/api/directories?path=${enc(path)}`),key:canonPath});
+function displayMoveDirectory(d){
+ moveParent=d.parent;$('#movePath').value=d.path;
+ $('#moveFolders').innerHTML=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');
+ document.querySelectorAll('.moveFolder').forEach(x=>x.ondblclick=()=>moveBrowse(x.dataset.p));$('#moveConfirm').disabled=false;
 }
+async function moveBrowse(path){
+ const version=++moveBrowseVersion,cached=moveDirectoryCache.peek(path);
+ $('#moveConfirm').disabled=true;
+ if(cached)displayMoveDirectory(cached);else $('#moveFolders').textContent='Loading folders…';
+ try{const d=await moveDirectoryCache.refresh(path);if(version!==moveBrowseVersion)return false;
+  if(!cached||JSON.stringify(cached)!==JSON.stringify(d))displayMoveDirectory(d);return true;
+ }catch(error){if(version===moveBrowseVersion){$('#moveConfirm').disabled=true;$('#moveFolders').textContent='Folder unavailable: '+error.message}return false}
+}
+const moveQueue=createMoveQueue({key:canonPath,
+ queued(paths,destination){
+  for(const p of paths)S.selected.delete(p);
+  S.selectionRequest=(S.selectionRequest||0)+1;S.selectionAnchor=null;S.selectionAnchorMeta=null;
+  refreshSelectionUI();$('#status').textContent=`Move queued · ${paths.length} file(s) → ${destination}`;
+ },
+ run:(paths,destination)=>optimisticFileAction(paths,()=>post('/api/files/move',{paths,destination})),
+ failed(error){$('#status').textContent='Move failed: '+error.message;alert('Move failed: '+error.message+'\nCompleted files were retained. Remaining source files can be selected and retried.');},
+ settled(){refreshSelectionUI()}
+});
 
 async function refreshFileHistory(show=false){try{const r=await j('/api/files/history?limit=20'),box=$('#fileHistory');if(!box)return;if(show)box.hidden=!box.hidden;box.innerHTML=(r.history||[]).map(h=>{const p=h.payload||{},detail=h.op==='mkdir'?p.path:(p.items||[]).map(x=>typeof x==='string'?x:(x.from+' → '+x.to)).join('<br>');return `<div><b>${esc(h.op)}</b>${h.undone?' · undone':''}${h.error?' · '+esc(h.error):''}<br>${esc(detail||'')}</div>`}).join('')||'No filesystem history.'}catch(e){alert(e.message)}}
 $('#undoFileBtn').onclick=async()=>{try{await post('/api/files/undo',{});await load(S.path);await refreshFileHistory()}catch(e){alert(e.message)}};$('#fileHistoryBtn').onclick=()=>refreshFileHistory(true);
-$('#moveBtn').onclick=async()=>{if(!S.selected.size)return;$('#moveCount').textContent=`${S.selected.size.toLocaleString()} file${S.selected.size===1?'':'s'} selected`;$('#moveFolders').textContent='Loading folders…';$('#moveConfirm').disabled=true;$('#moveDialog').showModal();await moveBrowse(S.path||S.scopeRoot||'C:\\')};$('#moveUp').onclick=()=>moveParent&&moveBrowse(moveParent);$('#moveGo').onclick=()=>moveBrowse($('#movePath').value);$('#movePath').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();moveBrowse(e.target.value)}};$('#moveConfirm').onclick=async()=>{const d=$('#movePath').value;if(!d)return;const paths=[...S.selected];$('#moveDialog').close();await optimisticFileAction(paths,()=>post('/api/files/move',{paths,destination:d}))};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0],old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});load(S.path)};
+$('#moveBtn').onclick=async()=>{const paths=[...S.selected].filter(p=>!moveQueue.has(p));if(!paths.length)return;$('#moveCount').textContent=`${paths.length.toLocaleString()} file(s) selected`;$('#moveDialog').showModal();await moveBrowse(lastMoveDestination||S.path||S.scopeRoot||'C:\\')};
+$('#moveUp').onclick=()=>moveParent&&moveBrowse(moveParent);$('#moveGo').onclick=()=>moveBrowse($('#movePath').value);$('#movePath').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();moveBrowse(e.target.value)}};
+$('#moveConfirm').onclick=()=>{if($('#moveConfirm').disabled)return;const destination=$('#movePath').value;if(!destination)return;lastMoveDestination=destination;moveBrowseVersion++;$('#moveDialog').close();moveQueue.enqueue([...S.selected],destination)};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0];if(moveQueue.has(p))return alert('This image is queued for moving.');const old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});load(S.path)};
 $('#rescanModelsBtn').onclick=()=>refreshModels(true);$('#sweepShownBtn').onclick=sweepShown;
 async function qualitySeenChoice(paths){
  const k=await post('/api/mv/quality-known',{paths,batch_size:16,force:false});
@@ -1654,7 +1694,7 @@ async function watchComfyBatch(id){if(!id||watchedComfyBatches.has(id))return;wa
 async function returnToOrigin(){
  if(pagedBrowse()&&mobilePager){S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;const pager=mobilePager,snapshot=await pager.focus(0);if(snapshot&&pager===mobilePager)await applyMobileSnapshot(snapshot,snapshot.files[0]?.path,pager);return;}
  const v=S.virtualGrid;if(!v.rows.length)return;
- gridActivity('return-to-origin');v.cursor=0;v.scoutDir=0;v.scoutExtra=0;
+ gridActivity('return-to-origin');v.selectionRing=null;v.cursor=0;v.scoutDir=0;v.scoutExtra=0;
  prepareNeighborhood();await prepareRow(0);paintRing();
  $('#status').textContent='Returned to origin';
 }
@@ -1867,7 +1907,7 @@ function touchRingStep(offset,rowHeight){return -Math.sign(offset)*Math.round(Ma
    if(version!==settleVersion)return;
    if(!enabled()||S.viewer||generation!==v.prepGeneration||files!==v.files||virtualGridLayout(v.files).rows!==rows)return;
    if(!ready.every(Boolean)||!required.every(rowReady))throw new Error('Destination rows not ready');
-   v.cursor=target;reportRingMovement(Math.sign(step));
+   recordSelectionRingMove(v.cursor,step);v.cursor=target;reportRingMovement(Math.sign(step));
   }catch(err){console.warn('[N8Vision] touch row preparation',err)}
   finally{
    if(version===settleVersion){S.touchRingBusy=false;reset();if(S.mobileReflowPending)reflowMobileColumns();else paintRing();}
