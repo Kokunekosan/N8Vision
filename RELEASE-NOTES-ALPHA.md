@@ -1,28 +1,32 @@
-# N8Vision alpha I.2t-l-Z1y
+# N8Vision alpha I.2t-l-Z2b — nightly update
 
-Update over Z1w, including both Z1x and Z1y. Complete download; no patch stacking.
+Complete package through Z2b, including Z1z, Z2a and Z2b; no patch stacking.
 
-## Latest fixes
+## Nightly fixes — October 18, 2026
 
-- Inclusive selection follows the browsed direction across the desktop ring origin.
-- Move destination folders appear immediately from a visited-folder cache, with
-  validation in the background. The picker remembers the last destination.
-- The server reuses folder listings until their directory signature changes;
-  first visits still enumerate. Directory timestamps can also change on file actions.
-- Move batches release selection immediately and execute sequentially, letting you
-  gather the next batch. Completed moves receive hand-truck markers; failures are
-  reported. The queue lives in the browser session: keep the tab open until done.
+- Explore detects created/removed folders, including empty ones, using background
+  directory checks. Tree changes do not rebuild or reposition the image grid.
+- Ctrl+A and Select Shown exclude deleted/moved placeholders and queued moves.
+- Settings / Ignore contents adds editable filename, full-path and wildcard rules.
+  Default: log.html. Matching files stay on disk; save reloads library counts.
+- Successful ComfyUI Replace recovery invalidates old masks, detections, quality
+  receipts, embeddings and corrections, refreshes file stats and cached identity.
+  Beside/output-only modes preserve the original. Frozen teaching examples remain.
+- Replacement invalidation applies after updating, not to already completed edits.
+  Wait for active batches to finish before updating. Running inference jobs are
+  not cancelled by this mechanism; general external-edit monitoring is not added.
 
-## Install or update
+## Install / update
 
-Windows/Python 3.14. New users: extract to an empty folder, run install.cmd and
-N8Vision.cmd. Existing users: stop Vision and replace application source while
-preserving .venv, data, cache, models and settings; restart and refresh browsers.
+New: extract to an empty folder, run install.cmd, then N8Vision.cmd.
+Existing: finish active jobs, stop Vision, replace application source while
+preserving .venv/data/cache/models/settings, restart and refresh browsers.
+Windows/Python3.14; optional heavier profiles/models retain their requirements.
 
-Checks: frontend/Python syntax, controlled ring direction tests, directory cache
-reuse/change detection using real temporary folders, browser queue/coalescing/
-failure recovery simulations, ZIP entry/CRC/manifest checks. Maintainer reports
-improved destination-picker responsiveness in live use. Broader device testing
-remains welcome. No model weights, credentials or personal archive included.
+Checks: Python/frontend syntax; real temporary directory-tree creation/removal
+and zero unchanged enumeration; ignore matching/validation; SQLite replacement
+cleanup and actual recovery replace/retry/beside branches; clean source manifest,
+ZIP CRC and byte/hash checks. Live nightly fixes still need broader validation.
+No personal archive, credentials, weights or runtime environment included.
 
-Bug reports: https://github.com/Kokunekosan/N8Vision/issues
+https://github.com/Kokunekosan/N8Vision/issues

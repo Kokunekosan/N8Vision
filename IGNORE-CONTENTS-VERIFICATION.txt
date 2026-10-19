@@ -1,0 +1,15 @@
+Z2a: explicit ignore-contents rules in Settings.
+Default exact filename log.html, case insensitive; user can remove it, add other
+names, full paths or wildcard rules. No blanket non-image exclusion added.
+Rules persist in local server configuration; no source-file deletion or archive
+record purge. Save and reload library rebuilds counts from filtered browse paths.
+Filter image intake, noticer registration/new packets, cached noticer browse path
+snapshots and range responses. Image allowlist itself remains unchanged.
+Ctrl+A/Select Shown now use eligible visible paths excluding deleted/forward
+markers and queued moves. Pending source count/reselection behavior otherwise same.
+Referenced HTML identifies as Fooocus Log; current intake already excludes HTML,
+so original batch error is not reproduced. Exact error requested from user.
+Tests exact/case/path/glob/opt-out/other-format matching and input validation;
+frontend/Python syntax and ZIP reconstruction/CRC/entry bytes/SHA256 verified.
+Live settings/batch actions not tested. Existing ignored observations remain stored.
+Apply over Z1z, restart and refresh. GitHub/live installation unchanged.

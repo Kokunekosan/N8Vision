@@ -1,0 +1,16 @@
+Z1z: Explore folder architecture updates without restarting or grid refresh.
+Root-scoped directory-only cache checks known directory identity/mtime/ctime;
+only changed directories enumerate their children. Includes new empty folders,
+removes vanished descendants, skips symlinks/junctions. Up to16 cached roots.
+Browser checks on existing5-second cycle after browse completion, including
+mobile; first request builds directory snapshot off the UI path. Revision avoids
+sending/rebuilding unchanged paths. Root guards reject stale responses; incomplete
+permission/error snapshots retain prior browser list. Folder menu and immediate
+folder navigation use actual snapshot instead of old image paths/placeholders.
+Creating a folder in Vision requests a tree update without reloading image grid.
+No image stat/re-verification or grid render/viewport reset from tree refresh.
+Tests: real nested/remove/new-empty/zero-unchanged-enumeration snapshots; frontend
+changed/unchanged/stale-root behavior; JS/Python syntax. Live UI not tested.
+Changes normally visible on next5-second check, longer on slow storage. Directory
+mtime reliability depends on filesystem. Apply overZ1y; restart and refresh.
+ZIP reconstruction/CRC/entry bytes/SHA256 verified. Live/GitHub unchanged.

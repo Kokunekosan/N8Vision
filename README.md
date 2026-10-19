@@ -5,7 +5,7 @@
 A free, open-source image library for browsing generated images, pruning files,
 inspecting metadata and preparing selected subjects for editing.
 
-**Official alpha: I.2t-l-Z1y.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z1y).
+**Official alpha: I.2t-l-Z2b.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z2b).
 No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
 
 ## Install and launch
@@ -54,7 +54,21 @@ Desktop window size is configured in Settings / Library, in steps of 1,000.
 Cross-window inclusive selection is supported for unfiltered Filesystem order;
 an unavailable anchor in other views is reported rather than guessed.
 
-## Latest fixes
+## Nightly fixes — October 18, 2026
+
+- Explore detects created/removed folders, including empty ones, using background
+  directory checks. Tree changes do not rebuild or reposition the image grid.
+- Ctrl+A and Select Shown exclude deleted/moved placeholders and queued moves.
+- Settings / Ignore contents adds editable filename, full-path and wildcard rules.
+  Default: log.html. Matching files stay on disk; save reloads library counts.
+- Successful ComfyUI Replace recovery invalidates old masks, detections, quality
+  receipts, embeddings and corrections, refreshes file stats and cached identity.
+  Beside/output-only modes preserve the original. Frozen teaching examples remain.
+- Replacement invalidation applies after updating, not to already completed edits.
+  Wait for active batches to finish before updating. Running inference jobs are
+  not cancelled by this mechanism; general external-edit monitoring is not added.
+
+## Previous fixes
 
 - Inclusive selection follows the browsed direction across the desktop ring origin.
 - Move destination folders appear immediately from a visited-folder cache, with

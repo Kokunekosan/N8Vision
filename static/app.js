@@ -60,7 +60,7 @@ function markEditionControls(){
 function applyEdition(info){
  S.edition=info.edition;S.capabilities=info;
  document.body.dataset.edition=info.edition;document.body.dataset.inference=String(!!info.inference);document.body.dataset.processing=String(!!info.processing);document.body.classList.remove('editionPending');
- const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z1y')+' · '+info.name;
+ const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z2b')+' · '+info.name;
  if(!info.processing)setMode('explore');
  document.body.dataset.subjectIntelligence=String(!!info.subject_intelligence);
  if(info.subject_intelligence&&!document.getElementById('subjectSeparateBtn')){
@@ -200,8 +200,20 @@ async function verifyRootCatalog(entry,key){
   }
  }catch(e){console.warn('New Noticer unavailable',e)}finally{noticeBusy=false}
 }
+let exploreTreeBusy=false;
+async function refreshExploreTree(){
+ const root=S.scopeRoot||S.path;
+ if(exploreTreeBusy||!root||!S._rootBrowseComplete)return;
+ exploreTreeBusy=true;
+ try{
+  const previous=S.exploreTree,revision=previous&&canonPath(previous.root)===canonPath(root)?previous.revision:'';
+  const tree=await j(`/api/directory-tree?path=${enc(root)}&since=${enc(revision)}`);
+  if(canonPath(S.scopeRoot||S.path)!==canonPath(root)||tree.incomplete||!Array.isArray(tree.paths))return;
+  S.exploreTree=tree;folderMenuIndex=null;renderScopeFolders();
+ }catch(error){console.warn('Folder tree refresh unavailable',error)}finally{exploreTreeBusy=false}
+}
 async function noticeSweep(){
- try{if(S.viewer||S.mobile)return;for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
+ try{await refreshExploreTree();if(S.viewer||S.mobile)return;for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
  finally{setTimeout(noticeSweep,5000)}
 }
 setTimeout(noticeSweep,5000);
@@ -242,6 +254,10 @@ function pathInsideScope(path){
 }
 function immediateCatalogDirs(path){
  const base=String(path||'').replace(/[\\\/]+$/,''),cbase=canonPath(base),seen=new Map();
+ if(S.exploreTree&&canonPath(S.exploreTree.root)===canonPath(S.scopeRoot)){
+  for(const p of S.exploreTree.paths){const cp=canonPath(p);if(!cp.startsWith(cbase+'\\'))continue;const rest=p.slice(base.length+1);if(!rest.includes('\\'))seen.set(cp,{path:p,name:rest});}
+  return [...seen.values()].sort((a,b)=>a.name.localeCompare(b.name));
+ }
  if(cbase===canonPath(S.scopeRoot))for(const d of(S.scopeRootDirs||[]))seen.set(canonPath(d.path),d);
  for(const f of S.files){
   const fp=String(f.path||'').replace(/\//g,'\\'),cfp=fp.toLowerCase();
@@ -260,7 +276,9 @@ async function buildScopeFolderMenu(version){
  const index=folderMenuIndex;
  const current=()=>version===folderMenuVersion&&index===folderMenuIndex&&files===S.files&&canonPath(S.scopeRoot||S.path||'')===cr;
  const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
- for(const d of S.scopeRootDirs||[])index.dirs.set(canonPath(d.path),d.path);
+ const tree=S.exploreTree&&canonPath(S.exploreTree.root)===cr?S.exploreTree:null;
+ if(tree){index.dirs=new Map(tree.paths.map(path=>[canonPath(path),path]));index.scanned=files.length;}
+ else for(const d of S.scopeRootDirs||[])index.dirs.set(canonPath(d.path),d.path);
  let slice=performance.now();
  while(index.scanned<files.length){
   let dir=String(files[index.scanned++].path||'').replace(/\//g,'\\').replace(/\\[^\\]+$/,'');
@@ -1274,9 +1292,9 @@ function updateTicker(){const t=$('#interactionTickerText');if(!t)return;t.textC
 const controlPlane=$('#controlPlane');if(controlPlane){controlPlane.onchange=e=>setControlPlane(e.target.value);setControlPlane(S.mobile?'touch':(localStorage.getItem('n8visionControlPlane')||'desktop'))}
 const softCtrl=$('#softCtrl'),softShift=$('#softShift');if(softCtrl)softCtrl.onclick=()=>{S.softCtrl=!S.softCtrl;updateSoftModifiers()};if(softShift)softShift.onclick=()=>{S.softShift=!S.softShift;updateSoftModifiers()};
 const ticker=$('#interactionTicker'),help=$('#interactionHelp'),helpClose=$('#interactionHelpClose');if(ticker)ticker.onclick=()=>{help.hidden=!help.hidden};if(helpClose)helpClose.onclick=()=>help.hidden=true;
-document.addEventListener('keydown',e=>{const editable=e.target?.matches?.('input,textarea,select,[contenteditable=true]');if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();toggleImageGrid();return}if(e.key==='Escape'&&!S.viewer)clearSelected();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'&&!S.viewer&&!editable){e.preventDefault();visibleFiles().forEach(f=>S.selected.add(f.path));refreshSelectionUI()}if(e.key==='Delete'&&!S.viewer&&!editable&&S.selected.size){e.preventDefault();deleteSelected().catch(err=>alert(err.message))}});
+document.addEventListener('keydown',e=>{const editable=e.target?.matches?.('input,textarea,select,[contenteditable=true]');if(e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='h'){e.preventDefault();toggleImageGrid();return}if(e.key==='Escape'&&!S.viewer)clearSelected();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='a'&&!S.viewer&&!editable){e.preventDefault();comparisonPaths().filter(p=>!moveQueue.has(p)).forEach(p=>S.selected.add(p));refreshSelectionUI()}if(e.key==='Delete'&&!S.viewer&&!editable&&S.selected.size){e.preventDefault();deleteSelected().catch(err=>alert(err.message))}});
 (function installLasso(){const grid=$('#grid');if(!grid)return;let drag=null,box=null,startSelection=null;grid.addEventListener('pointerdown',e=>{const ctrl=e.ctrlKey||e.metaKey||S.softCtrl;if(!ctrl||e.button!==0)return;e.preventDefault();const r=grid.getBoundingClientRect();drag={id:e.pointerId,x:e.clientX,y:e.clientY,grid:r,moved:false};startSelection=new Set(S.selected);box=document.createElement('div');box.className='selectionLasso';document.body.appendChild(box);grid.setPointerCapture(e.pointerId)});grid.addEventListener('pointermove',e=>{if(!drag||drag.id!==e.pointerId)return;if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>4)drag.moved=true;const x1=Math.min(drag.x,e.clientX),y1=Math.min(drag.y,e.clientY),x2=Math.max(drag.x,e.clientX),y2=Math.max(drag.y,e.clientY);Object.assign(box.style,{left:x1+'px',top:y1+'px',width:(x2-x1)+'px',height:(y2-y1)+'px'});S.selected=new Set(startSelection);document.querySelectorAll('#grid .card').forEach(c=>{const r=c.getBoundingClientRect();if(r.right>=x1&&r.left<=x2&&r.bottom>=y1&&r.top<=y2)S.selected.add(c.dataset.p)});document.querySelectorAll('#grid .card').forEach(c=>c.classList.toggle('selected',S.selected.has(c.dataset.p)));$('#selCount').textContent=S.selected.size});const end=e=>{if(!drag||drag.id!==e.pointerId)return;const wasMoved=drag.moved;if(wasMoved)S.suppressClickUntil=performance.now()+250;drag=null;if(box)box.remove();box=null;consumeSoftModifiers();render()};grid.addEventListener('pointerup',end);grid.addEventListener('pointercancel',end)})();
-$('#regenerateBtn').oncontextmenu=e=>{e.preventDefault();deleteRefineRecipe()};$('#locationBar').onclick=()=>setTree(!S.treeOpen);$('#boxesBtn').onclick=()=>toggleGeometry('boxes');$('#masksBtn').onclick=()=>toggleGeometry('masks');$('#filtersBtn').onclick=()=>setDrawer(!S.drawer);$('#sortKey').onchange=async e=>{const key=e.target.value;if(key==='similarity'&&S.compare?.kind!=='similar'){e.target.value=S.sortKey;return $('#similarBtn').onclick()}if(key==='uniqueness'&&S.compare?.kind!=='unique'){e.target.value=S.sortKey;return $('#uniqueBtn').onclick()}S.sortKey=key;render()};$('#sortDir').onclick=()=>{S.sortDir=S.sortDir==='asc'?'desc':'asc';$('#sortDir').textContent=S.sortDir==='asc'?'↑':'↓';render()};$('#tagSearch').oninput=renderTagResults;$('#clearFiltersBtn').onclick=()=>{S.magnets.clear();S.magnetSeq=0;$('#tagSearch').value='';renderMagnets();renderTagResults();render()};$('#goBtn').onclick=()=>scanCurrent();$('#path').oninput=updateScanButton;$('#path').onkeydown=e=>{if(e.key==='Enter')browseOnly($('#path').value,'path-enter')};$('#upBtn').onclick=()=>S.parent&&navigateTo(S.parent,false,'parent-focus');$('#recursive').onchange=async()=>{if(!S.scopeRoot)return;const want=$('#recursive').checked,registered=(S.archiveRoots||[]).some(r=>canonPath(r)===canonPath(S.scopeRoot));if(want&&!registered){$('#recursive').checked=false;$('#status').textContent='Recursive archival begins with Scan.';return}if(want&&!S.catalogRecursive){const keep=[...S.scopeSelections];await load(S.scopeRoot,false,'recursive-toggle');S.scopeSelections=new Set(keep);S.scopeRecursive=true;renderFolderSelection();render();return}S.scopeRecursive=want;render();$('#status').textContent=`${want?'Recursive':'Direct'} view · ${visibleFiles().length.toLocaleString()} shown`};$('#search').oninput=render;$('#minConfidence').oninput=e=>{$('#minConfidenceValue').textContent=Math.round(e.target.value*100)+'%';render()};$('#thumbSize').oninput=e=>{document.documentElement.style.setProperty('--thumb',e.target.value+'px');S.virtualGrid.start=S.virtualGrid.end=-1;invalidateRingLayout();scheduleVirtualGrid()};$('#thumbSize').onchange=()=>render();$('#selectShownBtn').onclick=()=>{visibleFiles().forEach(f=>S.selected.add(f.path));refreshSelectionUI()};
+$('#regenerateBtn').oncontextmenu=e=>{e.preventDefault();deleteRefineRecipe()};$('#locationBar').onclick=()=>setTree(!S.treeOpen);$('#boxesBtn').onclick=()=>toggleGeometry('boxes');$('#masksBtn').onclick=()=>toggleGeometry('masks');$('#filtersBtn').onclick=()=>setDrawer(!S.drawer);$('#sortKey').onchange=async e=>{const key=e.target.value;if(key==='similarity'&&S.compare?.kind!=='similar'){e.target.value=S.sortKey;return $('#similarBtn').onclick()}if(key==='uniqueness'&&S.compare?.kind!=='unique'){e.target.value=S.sortKey;return $('#uniqueBtn').onclick()}S.sortKey=key;render()};$('#sortDir').onclick=()=>{S.sortDir=S.sortDir==='asc'?'desc':'asc';$('#sortDir').textContent=S.sortDir==='asc'?'↑':'↓';render()};$('#tagSearch').oninput=renderTagResults;$('#clearFiltersBtn').onclick=()=>{S.magnets.clear();S.magnetSeq=0;$('#tagSearch').value='';renderMagnets();renderTagResults();render()};$('#goBtn').onclick=()=>scanCurrent();$('#path').oninput=updateScanButton;$('#path').onkeydown=e=>{if(e.key==='Enter')browseOnly($('#path').value,'path-enter')};$('#upBtn').onclick=()=>S.parent&&navigateTo(S.parent,false,'parent-focus');$('#recursive').onchange=async()=>{if(!S.scopeRoot)return;const want=$('#recursive').checked,registered=(S.archiveRoots||[]).some(r=>canonPath(r)===canonPath(S.scopeRoot));if(want&&!registered){$('#recursive').checked=false;$('#status').textContent='Recursive archival begins with Scan.';return}if(want&&!S.catalogRecursive){const keep=[...S.scopeSelections];await load(S.scopeRoot,false,'recursive-toggle');S.scopeSelections=new Set(keep);S.scopeRecursive=true;renderFolderSelection();render();return}S.scopeRecursive=want;render();$('#status').textContent=`${want?'Recursive':'Direct'} view · ${visibleFiles().length.toLocaleString()} shown`};$('#search').oninput=render;$('#minConfidence').oninput=e=>{$('#minConfidenceValue').textContent=Math.round(e.target.value*100)+'%';render()};$('#thumbSize').oninput=e=>{document.documentElement.style.setProperty('--thumb',e.target.value+'px');S.virtualGrid.start=S.virtualGrid.end=-1;invalidateRingLayout();scheduleVirtualGrid()};$('#thumbSize').onchange=()=>render();$('#selectShownBtn').onclick=()=>{comparisonPaths().filter(p=>!moveQueue.has(p)).forEach(p=>S.selected.add(p));refreshSelectionUI()};
 function evictPaths(paths){const gone=new Set(paths);S.files=S.files.filter(f=>!gone.has(f.path));for(const p of gone)S.selected.delete(p);S.multiWork=S.multiWork.filter(p=>!gone.has(p));if(S.selectionAnchor&&gone.has(S.selectionAnchor))S.selectionAnchor=null;if(S.viewer&&gone.has(S.viewer))closeViewer();render()}
 // A filesystem move is not a browse transaction. Apply the journal's exact path
 // mapping locally so the ringworld, filters, and navigation stay where they are.
@@ -1438,7 +1456,7 @@ async function refreshFileHistory(show=false){try{const r=await j('/api/files/hi
 $('#undoFileBtn').onclick=async()=>{try{await post('/api/files/undo',{});await load(S.path);await refreshFileHistory()}catch(e){alert(e.message)}};$('#fileHistoryBtn').onclick=()=>refreshFileHistory(true);
 $('#moveBtn').onclick=async()=>{const paths=[...S.selected].filter(p=>!moveQueue.has(p));if(!paths.length)return;$('#moveCount').textContent=`${paths.length.toLocaleString()} file(s) selected`;$('#moveDialog').showModal();await moveBrowse(lastMoveDestination||S.path||S.scopeRoot||'C:\\')};
 $('#moveUp').onclick=()=>moveParent&&moveBrowse(moveParent);$('#moveGo').onclick=()=>moveBrowse($('#movePath').value);$('#movePath').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();moveBrowse(e.target.value)}};
-$('#moveConfirm').onclick=()=>{if($('#moveConfirm').disabled)return;const destination=$('#movePath').value;if(!destination)return;lastMoveDestination=destination;moveBrowseVersion++;$('#moveDialog').close();moveQueue.enqueue([...S.selected],destination)};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0];if(moveQueue.has(p))return alert('This image is queued for moving.');const old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});load(S.path)};
+$('#moveConfirm').onclick=()=>{if($('#moveConfirm').disabled)return;const destination=$('#movePath').value;if(!destination)return;lastMoveDestination=destination;moveBrowseVersion++;$('#moveDialog').close();moveQueue.enqueue([...S.selected],destination)};$('#renameBtn').onclick=async()=>{if(S.selected.size!==1)return alert('Select exactly one file.');const p=[...S.selected][0];if(moveQueue.has(p))return alert('This image is queued for moving.');const old=p.split(/[\\/]/).pop(),input=prompt('New filename:',old);if(!input||input===old)return;const ext=old.match(/\.[^.]+$/)?.[0]||'';const n=ext&&!input.includes('.')?input+ext:input;const r=await post('/api/files/rename',{path:p,name:n});patchMovedFiles([r])};$('#mkdirBtn').onclick=async()=>{if(!S.path)return;const n=prompt('New folder name:');if(!n)return;await post('/api/files/mkdir',{parent:S.path,name:n});await refreshExploreTree()};
 $('#rescanModelsBtn').onclick=()=>refreshModels(true);$('#sweepShownBtn').onclick=sweepShown;
 async function qualitySeenChoice(paths){
  const k=await post('/api/mv/quality-known',{paths,batch_size:16,force:false});
@@ -1955,3 +1973,19 @@ if(!S.mobile){
  for(const delta of [-500,500]){const button=document.createElement('button');button.textContent=delta<0?'Previous 500':'Next 500';button.onclick=async()=>{if(!mobilePager||S.viewer||S.mobileWindowBusy)return;const pager=mobilePager,position=Math.max(0,(S.mobileNavigationPosition??pager.position)+delta);button.disabled=true;try{const snapshot=await pager.focus(position);if(snapshot&&pager===mobilePager){const anchor=snapshot.files.find(f=>f._n8ArchiveIndex>=position)||snapshot.files.at(-1);S.mobileNavigationPosition=anchor?._n8ArchiveIndex??position;await applyMobileSnapshot(snapshot,anchor?.path,pager)}}catch(error){alert(error.message)}finally{button.disabled=false}};windowSteps.append(button)}
  $('#mobilePagingInfo')?.after(windowSteps);if(S.desktopWindowed)$('#mobilePagingInfo').hidden=false;
 }
+
+(function installContentIgnore(){
+ const section=document.createElement('section');section.innerHTML='<h3>Ignore contents</h3><p class="tiny">One filename or wildcard per line. Full path rules also work. Matching files stay on disk but are excluded from the browser and selection. Other file types are not blanket-ignored.</p><textarea id="contentIgnoreRules" rows="4" style="width:100%" placeholder="log.html"></textarea><button id="saveContentIgnore">Save and reload library</button><span id="contentIgnoreStatus" class="tiny"></span>';
+ const settings=$('#settingsDrawer');if(!settings)return;settings.append(section);
+ const input=section.querySelector('textarea'),status=section.querySelector('span'),button=section.querySelector('button');
+ let loaded=false;
+ new MutationObserver(async()=>{if(loaded||!settings.classList.contains('open'))return;loaded=true;try{const r=await j('/api/config/content-ignore');input.value=r.rules.join('\n')}catch(error){loaded=false;status.textContent=error.message}}).observe(settings,{attributes:true,attributeFilter:['class']});
+ button.onclick=async()=>{button.disabled=true;try{
+  if(!loaded)throw Error('Wait for ignore rules to load');
+  const rules=input.value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  await j('/api/config/content-ignore',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({rules})});
+  rootCatalogs.clear();S.selectionRequest=(S.selectionRequest||0)+1;S.selected.clear();S.selectionAnchor=null;S.selectionAnchorMeta=null;
+  status.textContent='Saved. Ignored files were left on disk.';
+  if(S.scopeRoot)await load(S.scopeRoot,true,'ignore-rules');
+ }catch(error){status.textContent=error.message}finally{button.disabled=false}};
+})();

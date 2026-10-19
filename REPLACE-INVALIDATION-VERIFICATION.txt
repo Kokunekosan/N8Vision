@@ -1,0 +1,16 @@
+Z2b: successful Comfy Replace invalidates old pixel analysis.
+Shared refinement/Workshop recovery clears observations (incl masks, receipts,
+manual/detector subject records), embeddings and corrections for the replaced
+path; updates tracked size/mtime and clears stored sha256 without rehashing.
+Marks old cache assets invalidated and bumps observation revision. Frozen saved
+teaching examples remain tied to their original captured pixels. Other paths
+and beside/leave-in-Comfy outputs remain unchanged. No content hash scan added.
+Only after successful file transfer; pending recovered target lets cleanup retry
+without trashing the fresh replacement. Existing end-of-batch regrid retained.
+Tests SQLite cleanup/other paths/frozen lessons/hash identity, actual recovery
+replace/retry/beside branches and Python syntax. Live169-image batch untested.
+Applies to future replacements after restart, not prior completed replacements.
+Concurrent already-running inference can still write its own results; no general
+external-file replacement watcher or job-generation cancellation added here.
+Apply overZ2a after active batch finishes, restart and refresh. ZIP reconstruction/
+CRC/entry bytes/SHA256 verified. GitHub and live installation unchanged.

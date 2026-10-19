@@ -40,7 +40,7 @@ async def edition_capabilities(request:Request,call_next):
  return await call_next(request)
 
 @app.get('/api/edition')
-def edition_info():return {**EDITION,'version':'I.2t-l-Z1y','subject_intelligence_available':EDITION['subject_intelligence']}
+def edition_info():return {**EDITION,'version':'I.2t-l-Z2b','subject_intelligence_available':EDITION['subject_intelligence']}
 
 LOCAL_ATTENTION=0
 @app.get('/api/instance')
@@ -1062,8 +1062,21 @@ def _cache_maintenance():
   except Exception:pass
  return {'deleted':deleted}
 
+from .content_ignore import ignored as content_ignored,clean_rules
+CONTENT_IGNORE_RULES=tuple(_load_config().get('content_ignore_rules',['log.html']))
+def ignored_content(path):return content_ignored(path,CONTENT_IGNORE_RULES)
+@app.get('/api/config/content-ignore')
+def get_content_ignore():return {'rules':list(CONTENT_IGNORE_RULES)}
+@app.put('/api/config/content-ignore')
+def set_content_ignore(req:dict):
+ global CONTENT_IGNORE_RULES
+ try:rules=clean_rules(req.get('rules'))
+ except ValueError as error:raise HTTPException(400,str(error))
+ cfg=_load_config();cfg['content_ignore_rules']=rules;_save_config(cfg);CONTENT_IGNORE_RULES=tuple(rules)
+ return {'rules':rules}
+
 def image_file(p):
- if not (p.is_file() and p.suffix.lower() in IMAGE_EXTS):return False
+ if ignored_content(p) or not (p.is_file() and p.suffix.lower() in IMAGE_EXTS):return False
  try:
   if _inside(p.resolve(),thumbnail_cache_root(p).resolve()):return False
  except Exception:pass
@@ -1221,14 +1234,14 @@ def _get_noticer(path,recursive):
 def _noticer_register(watcher):
  # Commit before advancing: DB failures keep the same batch eligible for retry.
  with watcher.lock:
-  records=list(watcher.events[watcher.intake_cursor:])
-  if not records:return 0
+  records=[x for x in watcher.events[watcher.intake_cursor:] if not ignored_content(x['path'])]
+  if not records:watcher.intake_cursor=len(watcher.events);return 0
   with db() as c:
    before=c.total_changes
    c.executemany("INSERT INTO tracked_files(path,size,mtime,orphaned,last_seen) VALUES(?,?,?,0,unixepoch()) ON CONFLICT(path) DO NOTHING",
     [(x['path'],x['size'],x['mtime']) for x in records])
    inserted=c.total_changes-before
-  watcher.intake_cursor+=len(records)
+  watcher.intake_cursor=len(watcher.events)
  return inserted
 
 def _noticer_inspections():
@@ -1283,6 +1296,7 @@ def browse_new(path:str=Query(...),recursive:bool=False,since:int=Query(0,ge=0),
  packet=watcher.packet(since if epoch==watcher.epoch else 0)
  obs=obs_for([x['path'] for x in packet['files']])
  for record in packet['files']:record['observations']=obs.get(record['path'],[])
+ packet['files']=[f for f in packet['files'] if not ignored_content(f['path'])]
  packet['observation_revision']=OBS_REV
  return packet
 
@@ -1298,7 +1312,8 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    with BROWSE_SESSIONS_LOCK:
     sess=BROWSE_SESSIONS.get(token)
     if sess:sess['notice_cursor']=notice_cursor;sess['notice_epoch']=notice_epoch
-   for raw in ordered_paths(paths):yield Path(raw)
+   for raw in ordered_paths(paths):
+    if not ignored_content(raw):yield Path(raw)
   def publish(paths,chunk_index=None):
    nonlocal total
    records=[]
@@ -1366,6 +1381,14 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
    if sess:sess['error']=f'{type(e).__name__}: {e}';sess['complete']=True;sess['updated']=time.monotonic();sess['completed_at']=time.monotonic()
 
 
+from .directory_tree import DirectoryTree
+EXPLORE_DIRECTORY_TREE=DirectoryTree()
+@app.get('/api/directory-tree')
+def directory_tree(path:str=Query(...),since:str=Query('')):
+ result=EXPLORE_DIRECTORY_TREE.snapshot(norm(path))
+ if result['revision']==since:result.pop('paths',None)
+ return result
+
 DIRECTORY_TREE_CACHE={}
 DIRECTORY_TREE_LOCK=threading.Lock()
 @app.get('/api/directories')
@@ -1421,7 +1444,7 @@ def browse_range(tx:str=Query(...),first:int=Query(...,ge=0),last:int=Query(...,
   paths=sess.get('path_index')
   if paths is None:raise HTTPException(409,'Archive index not ready; retry selection')
   if last>=len(paths):raise HTTPException(400,'Selection range exceeds archive')
-  result=[{'path':str(path),'index':index} for index,path in enumerate(paths[first:last+1],first)]
+  result=[{'path':str(path),'index':index} for index,path in enumerate(paths[first:last+1],first) if not ignored_content(path)]
  return {'browse_tx':tx,'paths':result}
 
 @app.get('/api/browse/chunk')
@@ -5519,7 +5542,20 @@ def _method_slug(name):
  s=re.sub(r'[^A-Za-z0-9._-]+','-',str(name or 'Process')).strip('-_.')
  return s or 'Process'
 
+def _invalidate_replacement_analysis(pending,target):
+ if pending.get('_replacement_invalidated'):return
+ from .replacement_analysis import invalidate
+ st=target.stat()
+ with db() as c:counts=invalidate(c,str(target),st.st_size,st.st_mtime)
+ _cache_mark_path(str(target),state='invalidated')
+ bump_obs_revision();pending['_replacement_invalidated']=True
+ LOG.info('Replaced image: old pixel analysis invalidated · %s · %s',target,counts)
+
 def _recover_comfy_asset(pending,env,outputs):
+ if pending.get('_recovered_target'):
+  target=Path(pending['_recovered_target'])
+  if pending.get('destination')=='replace':_invalidate_replacement_analysis(pending,target)
+  return target
  src=norm(pending['source']);fresh=_reported_comfy_output(env,outputs,pending.get('output_prefix',''))
  if fresh is None:raise RuntimeError(f"Comfy reported output ready, but did not report the asset assigned to this job ({pending.get('output_prefix')}).")
  if not src.parent.exists():raise RuntimeError(f'Source folder disappeared before output recovery: {src.parent}')
@@ -5535,6 +5571,8 @@ def _recover_comfy_asset(pending,env,outputs):
   pending['iteration']=iteration
  # shutil.move is deliberate: recovered Comfy assets leave the output staging tree.
  shutil.move(str(fresh),str(target))
+ pending['_recovered_target']=str(target)
+ if mode=='replace':_invalidate_replacement_analysis(pending,target)
  return target
 
 def _history_output_rows(doc,prompt_id):
