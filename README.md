@@ -2,8 +2,16 @@
 
 <img src="static/N8_256.png" width="128" height="128" alt="N8Vision icon">
 
-A free, open-source image library for browsing generated images, pruning files,
+A free, open-source image library for browsing ANY (not just generated) images, pruning files,
 inspecting metadata and preparing selected subjects for editing.
+
+Uses a seamless Infinite Scroll to recursively browse every folder beneath assigned Root directories.
+You can scroll Up from the top of the list to see the bottom, without having to navigate to Argentina
+first.
+
+Comes with a built-in remote-access portal. LAN/Wi-Fi only requires scanning an on-screen QR-code 
+(or typing in the link below it) for instant pairing. http remote connection requires you have an
+address of your own, but I just learned they're stupid cheap, so skip one baconator and buy a domain.
 
 **Official alpha: I.2t-l-Z2b.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z2b).
 No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
