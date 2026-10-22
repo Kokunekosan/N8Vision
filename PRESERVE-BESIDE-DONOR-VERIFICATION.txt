@@ -1,0 +1,16 @@
+Z2g: preserve Beside donors and reset sticky Replace mode.
+Found new Refine wizard inherited output choice from prior run, including Replace.
+Each fresh run now defaults Beside, and action button identifies selected mode.
+This is a plausible explanation for reported deletion, not proven historical cause.
+Beside recovery copies independent Comfy output into an exclusively created sibling,
+checks donor identity/stat stability, and only removes independent staged output.
+Reject missing donor, source/output resolved aliases or hardlinks, unknown modes.
+No Beside donor rename/trash/unlink. Existing sibling never overwritten. Replace
+remains explicit. Log mode/donor/output for traceability. Per-pending recovery lock
+serializes history/bridge callbacks and uses recovered-target retry identity.
+Tests real donor byte/name/mtime preservation, sibling content, collision suffix,
+alias/hardlink/missing donor protection; actual wizard resets Replace to Beside
+and shows mode; frontend/Python syntax. Historical case not reproduced.
+Apply overZ2f after activejobs finish, restart/refresh. New default applies newly
+opened wizard; alreadyqueued mode unchanged. ZIP reconstruction/CRC/hash verified.
+Live installation/GitHub unchanged. No originals restored at user's request.

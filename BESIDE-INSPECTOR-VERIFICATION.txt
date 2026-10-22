@@ -1,0 +1,17 @@
+Z2f: Beside outputs next to donors at single batch regrid; default inspector nav.
+Recovery batch records explicit source/target/destination mapping. Completed-batch
+refresh fetches only mapped path metadata, merges existing catalog and places
+Beside outputs immediately after donor in Filesystem order. Named/quality/semantic
+sorts keep their own order. Retains donor home pin; no per-output regrid. Browser
+pair map reapplies to later bounded-page snapshots when donor is resident.
+Pair map is session-local; natural filename order after reload remains separate.
+Normal inspector Previous/Next now shown, current filtered display order, excludes
+markers/pending moves, stops at ends. Multi-Work retains selected subset. Fresh
+single inspection clears previous Multi-Work state. Bounded inspector navigates
+loaded view; no automatic paging added. Mask painter UI unchanged.
+Tests out-of-order recovery pairs, duplicate/missing donor; actual bounded batch
+refresh targeted request/single render/home pin/snapshot pairing; normal inspector
+forward/back/markers/end behavior; frontend/Python syntax. Live Comfy UI untested.
+Apply overZ2e after activejobs finish, restart/refresh. ZIP reconstruction/CRC/
+entry bytes/hash verified. Existing running-batch mappings not retrofitted.
+GitHub and live installation unchanged.

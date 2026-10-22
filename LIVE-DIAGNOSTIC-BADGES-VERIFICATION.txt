@@ -1,0 +1,15 @@
+Z2d: diagnostic badges visible in fixed-height ring cards; live metadata patches.
+Diagnostic detail box previously position:static below fixed-height thumbnail,
+clipped by card. Now persistent in-card scrolling overlay within70percent height.
+Respect hide-all-badges preference. Hover mode unchanged.
+Refresh prioritizes mounted paths, patches mounted+prepared badges/quality on
+each50-path metadata response, preserves image nodes and row/layout positions.
+Active jobs permit throttled background metadata refresh without blocking job
+poll; entire pass no longer gates badge visibility. Abort leaves received badges
+updated without certifying incomplete catalog revision. Cached sanity verbosity
+updates immediately. No force pixel cache invalidation for metadata-only changes.
+Tests actual refresh firstpacket paint before later abort, mounted priority,
+incomplete revision not certified, cached badge/placeholder behavior and JS/Python
+syntax. CSS browser/mobile visual check pending. No backend inference changes.
+Apply overZ2c, restart and refresh. ZIP reconstruction/CRC/hash verified.
+Live installation and GitHub unchanged.

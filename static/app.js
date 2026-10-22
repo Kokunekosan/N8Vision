@@ -60,7 +60,7 @@ function markEditionControls(){
 function applyEdition(info){
  S.edition=info.edition;S.capabilities=info;
  document.body.dataset.edition=info.edition;document.body.dataset.inference=String(!!info.inference);document.body.dataset.processing=String(!!info.processing);document.body.classList.remove('editionPending');
- const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z2b')+' · '+info.name;
+ const version=document.querySelector('.brand span');if(version)version.textContent=(info.version||'I.2t-l-Z2v')+' · '+info.name;
  if(!info.processing)setMode('explore');
  document.body.dataset.subjectIntelligence=String(!!info.subject_intelligence);
  if(info.subject_intelligence&&!document.getElementById('subjectSeparateBtn')){
@@ -126,6 +126,7 @@ async function init(){
   S.refreshSubjectClassStatus?.();
   const archiveRootsReady=refreshArchiveRoots();
   const volumesReady=j('/api/roots').then(rr=>{
+   folderArchitecture.seed(rr.roots);
    $('#roots').innerHTML=rr.roots.map(x=>`<div class="root" data-p="${esc(x)}">${esc(x)}</div>`).join('');
    document.querySelectorAll('.root').forEach(x=>x.onclick=()=>browseOnly(x.dataset.p,'volume-browse'));
   }).catch(e=>console.warn('Volume list unavailable at startup',e));
@@ -142,6 +143,7 @@ async function refreshArchiveRoots(){
 // I.2q: A root switch consumes the last completed catalog immediately. A new
 // filesystem verification is a separate transaction and never owns the viewport.
 const rootCatalogs=new Map(),rootLastLook=new Map();
+const folderArchitecture=createFolderArchitecture({key:canonPath});
 function rootCatalogKey(path,recursive){return canonPath(path)+'|'+(recursive?'recursive':'direct')}
 function rememberRootCatalog(){
  if(S.mobile||!S.scopeRoot||!S._rootBrowseComplete)return;
@@ -209,11 +211,11 @@ async function refreshExploreTree(){
   const previous=S.exploreTree,revision=previous&&canonPath(previous.root)===canonPath(root)?previous.revision:'';
   const tree=await j(`/api/directory-tree?path=${enc(root)}&since=${enc(revision)}`);
   if(canonPath(S.scopeRoot||S.path)!==canonPath(root)||tree.incomplete||!Array.isArray(tree.paths))return;
-  S.exploreTree=tree;folderMenuIndex=null;renderScopeFolders();
+  S.exploreTree=tree;folderArchitecture.replaceRoot(tree.root,tree.paths);refreshOpenMoveDirectory();folderMenuIndex=null;renderScopeFolders();
  }catch(error){console.warn('Folder tree refresh unavailable',error)}finally{exploreTreeBusy=false}
 }
 async function noticeSweep(){
- try{await refreshExploreTree();if(S.viewer||S.mobile)return;for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
+ try{await drainComfyRefreshes();await refreshExploreTree();await refreshExternalMoveDirectories();if(S.viewer||S.mobile)return;for(const [key,entry] of rootCatalogs)await verifyRootCatalog(entry,key)}
  finally{setTimeout(noticeSweep,5000)}
 }
 setTimeout(noticeSweep,5000);
@@ -286,6 +288,7 @@ async function buildScopeFolderMenu(version){
   if(performance.now()-slice>6){await yieldUI();if(!current())return;slice=performance.now();}
  }
  if(!current())return;
+ folderArchitecture.seed([root,...index.dirs.values()]);
  const rows=[...index.dirs.values()].sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'}));
  const fragment=document.createDocumentFragment();
  for(let i=0;i<rows.length;i++){
@@ -705,7 +708,12 @@ function openViewer(path,{selectBox=null,selectConcept=null}={}){observationRefr
   finally{boxSaving=false;}
  };
  v.querySelector('.viewerClose').onclick=closeViewer;v.querySelector('.viewerBackdrop').onclick=closeViewer}
-function installViewerDisplayControls(v,path){const panel=v.querySelector('.viewerPanel');if(!panel)return;panel.classList.toggle('viewerStretch',S.viewerStretch);panel.classList.toggle('viewerClean',S.viewerClean);const stretch=v.querySelector('#viewerStretchBtn'),clean=v.querySelector('#viewerCleanBtn'),prev=v.querySelector('#viewerPrevBtn'),next=v.querySelector('#viewerNextBtn');if(stretch){stretch.classList.toggle('active',S.viewerStretch);stretch.onclick=()=>{S.viewerStretch=!S.viewerStretch;panel.classList.toggle('viewerStretch',S.viewerStretch);stretch.classList.toggle('active',S.viewerStretch)}}if(clean){clean.classList.toggle('active',S.viewerClean);clean.onclick=()=>{S.viewerClean=!S.viewerClean;panel.classList.toggle('viewerClean',S.viewerClean);clean.classList.toggle('active',S.viewerClean)}}const multi=S.multiWork.length>1;if(prev){prev.hidden=!multi;prev.onclick=()=>stepMulti(-1)}if(next){next.hidden=!multi;next.onclick=()=>stepMulti(1)}}
+function installViewerDisplayControls(v,path){const panel=v.querySelector('.viewerPanel');if(!panel)return;panel.classList.toggle('viewerStretch',S.viewerStretch);panel.classList.toggle('viewerClean',S.viewerClean);const stretch=v.querySelector('#viewerStretchBtn'),clean=v.querySelector('#viewerCleanBtn'),prev=v.querySelector('#viewerPrevBtn'),next=v.querySelector('#viewerNextBtn');if(stretch){stretch.classList.toggle('active',S.viewerStretch);stretch.onclick=()=>{S.viewerStretch=!S.viewerStretch;panel.classList.toggle('viewerStretch',S.viewerStretch);stretch.classList.toggle('active',S.viewerStretch)}}if(clean){clean.classList.toggle('active',S.viewerClean);clean.onclick=()=>{S.viewerClean=!S.viewerClean;panel.classList.toggle('viewerClean',S.viewerClean);clean.classList.toggle('active',S.viewerClean)}}const paths=inspectorBrowsePaths(),index=paths.indexOf(path);if(prev){prev.hidden=false;prev.disabled=index<=0;prev.title='Previous image';prev.setAttribute('aria-label','Previous image');prev.onclick=()=>stepInspector(-1)}if(next){next.hidden=false;next.disabled=index<0||index>=paths.length-1;next.title='Next image';next.setAttribute('aria-label','Next image');next.onclick=()=>stepInspector(1)}}
+function inspectorBrowsePaths(){
+ const source=S.multiWork.length>1?S.multiWork.map(path=>S.files.find(f=>f.path===path)).filter(Boolean):S.virtualGrid.files;
+ return source.filter(f=>!f._n8Tombstone&&!f._n8ForwardTo&&!moveQueue.has(f.path)).map(f=>f.path);
+}
+function stepInspector(delta){const paths=inspectorBrowsePaths(),index=paths.indexOf(S.viewer),target=paths[index+delta];if(index>=0&&target){S.multiIndex=S.multiWork.indexOf(target);openViewer(target)}}
 function stepMulti(delta){if(!S.multiWork.length)return;S.multiIndex=(S.multiIndex+delta+S.multiWork.length)%S.multiWork.length;openViewer(S.multiWork[S.multiIndex])}
 function closeViewer(){const v=$('#imageViewer');if(v){v._viewerResize?.disconnect();v._maskResize?.disconnect();v._maskDispose?.();v._maskDispose=null;v._inspectionCamera?.dispose();v._maskCamera?.dispose();v.classList.remove('open');}S.viewer=null;prepareNeighborhood();pumpRowPrep();scheduleRingPaint();if(S._teachDiscoveryDirty){S._teachDiscoveryDirty=false;refreshDiscovered()}}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&S.viewer)closeViewer()});
@@ -764,7 +772,7 @@ async function applyMobileSnapshot(snapshot,anchor,pager){
  if(pager!==mobilePager)return;if(mobileLayoutTask)await mobileLayoutTask;if(pager!==mobilePager)return;
  S.mobileWindowBusy=true;S.touchRingBusy=true;document.body.classList.add('mobileWindowChanging');
  try{
-  S.files=snapshot.files;S.mobileNavigationPosition=snapshot.position;await prepareMobileViewport(anchor||S.files[0]?.path);
+  S.files=applyBesideOrder(snapshot.files);S.mobileNavigationPosition=snapshot.position;await prepareMobileViewport(anchor||S.files[0]?.path);
   if(pager!==mobilePager)return;
   const label=`Images ${snapshot.first+1}–${snapshot.last+1} · ${S.files.length.toLocaleString()} loaded`;
   $('#mobilePagingInfo').textContent=label+' · Search, filters and sort use this window';
@@ -843,7 +851,7 @@ function bindRingRow(row,spec,ri){
 }
 function thumbUrl(f){return `/api/thumb?path=${enc(f.path)}&v=${encodeURIComponent(f.mtime||0)}&r=${S.gridRedrawEpoch||0}`}
 function topLeftGridPath(){if(S.mobile)return S.virtualGrid.rows?.[S.virtualGrid.cursor]?.[0]?.f?.path||null;const c=$('#grid .visualRow .card');return c?.dataset?.p||S.virtualGrid.rows?.[S.virtualGrid.cursor]?.[0]?.f?.path||null}
-function tempHomePath(){const fs=visibleFiles(),raw=topLeftGridPath();if(!fs.length)return null;let i=Math.max(0,fs.findIndex(f=>f.path===raw));for(let n=i;n<fs.length;n++)if(!fs[n]._n8Tombstone)return fs[n].path;for(let n=i-1;n>=0;n--)if(!fs[n]._n8Tombstone)return fs[n].path;return null}
+function tempHomePath(){const fs=S.virtualGrid.files?.length?S.virtualGrid.files:visibleFiles(),raw=S.virtualGrid.rows?.[S.virtualGrid.cursor]?.[0]?.f?.path||topLeftGridPath();if(!fs.length)return null;let i=Math.max(0,fs.findIndex(f=>f.path===raw));for(let n=i;n<fs.length;n++)if(!fs[n]._n8Tombstone&&!fs[n]._n8ForwardTo)return fs[n].path;for(let n=i-1;n>=0;n--)if(!fs[n]._n8Tombstone&&!fs[n]._n8ForwardTo)return fs[n].path;return null}
 function pinTempHome(path){if(!path)return false;const ri=currentAnchorRow(path);if(ri<0)return false;S.virtualGrid.cursor=ri;return true}
 function forgetCurrentThumbAssets(paths){const wanted=new Set((paths||[]).map(f=>canonPath(f.path)));for(const [url,e] of [...thumbAssets.entries()]){let hit=false;try{const q=new URL(url,location.href).searchParams.get('path');hit=q&&wanted.has(canonPath(q))}catch(_){}if(!hit)continue;thumbAssets.delete(url);if(e?.objectUrl)URL.revokeObjectURL(e.objectUrl)}}
 // P.45 hard brake: a thumbnail URL gets one browser fetch while it remains in the bounded asset rack.
@@ -1011,11 +1019,12 @@ function moveRingRows(delta){
  recordSelectionRingMove(v.cursor,dir);v.cursor=target;reportRingMovement(dir);paintRing();
 }
 function renderVirtualGrid(){paintRing()}
-function render(){
+function render({anchor=null}={}){
  const fs=visibleFiles(),g=$('#grid');if(!S.imageGridEnabled){g.replaceChildren();S.virtualGrid.files=[];$('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton();updateArchiveNavigator();return}
  const old=S.virtualGrid.files;S.virtualGrid.files=fs;if(old!==fs)invalidateRingLayout();S.virtualGrid.sm=S.semantic?new Map(S.semantic.map(x=>[x.path,x.score])):null;S.virtualGrid.cm=S.compare?new Map(S.compare.results.map(x=>[x.path,x.score])):null;
  const structural=old.length!==fs.length||old.some((f,i)=>fs[i]?.path!==f.path);
  if(structural&&old.length===0)S.virtualGrid.cursor=0;
+ if(anchor){S.virtualGrid.rows=virtualGridLayout(fs).rows;S.virtualGrid.selectionRing=null;pinTempHome(anchor);}
  paintRing();
  $('#selCount').textContent=S.selected.size;$('#counts').textContent=`Selected ${S.selected.size.toLocaleString()} · Shown ${fs.length.toLocaleString()} · ${pagedBrowse()?'Loaded':'Total'} ${S.files.length.toLocaleString()}`;updateFilterButton()
 }
@@ -1113,7 +1122,7 @@ function select(p,e={}){
 installGridSelectionGuard($('#grid'));
 
 function consumeSoftModifiers(){if(S.softCtrl||S.softShift){S.softCtrl=false;S.softShift=false;updateSoftModifiers()}}
-function inspectRequest(path){if(S.selected.size<=1)return openViewer(path);const old=$('#multiChoice');if(old)old.remove();const d=document.createElement('div');d.id='multiChoice';d.className='multiChoice';d.innerHTML=`<div class="multiChoiceCard"><b>Inspect selection</b><div>${S.selected.size} images selected.</div><div class="buttonGrid"><button id="inspectSingle">Single</button><button id="inspectMulti" title="Yeah, all the images I selected. I want to look at them all a bit closer for whatever reason.">Multi-Work</button></div></div>`;document.body.appendChild(d);$('#inspectSingle').onclick=()=>{d.remove();openViewer(path)};$('#inspectMulti').onclick=()=>{d.remove();const q=S.virtualGrid.files.filter(f=>S.selected.has(f.path)).map(f=>f.path),i=Math.max(0,q.indexOf(path));S.multiWork=q;S.multiIndex=i;openViewer(q[i])}}
+function inspectRequest(path){S.multiWork=[];S.multiIndex=-1;if(S.selected.size<=1)return openViewer(path);const old=$('#multiChoice');if(old)old.remove();const d=document.createElement('div');d.id='multiChoice';d.className='multiChoice';d.innerHTML=`<div class="multiChoiceCard"><b>Inspect selection</b><div>${S.selected.size} images selected.</div><div class="buttonGrid"><button id="inspectSingle">Single</button><button id="inspectMulti" title="Yeah, all the images I selected. I want to look at them all a bit closer for whatever reason.">Multi-Work</button></div></div>`;document.body.appendChild(d);$('#inspectSingle').onclick=()=>{d.remove();openViewer(path)};$('#inspectMulti').onclick=()=>{d.remove();const q=S.virtualGrid.files.filter(f=>S.selected.has(f.path)).map(f=>f.path),i=Math.max(0,q.indexOf(path));S.multiWork=q;S.multiIndex=i;openViewer(q[i])}}
 async function post(url,obj){try{return await j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)})}catch(e){alert(e.message);throw e}}
 async function stopAnalysis(){try{const r=await post('/api/jobs/stop-analysis',{});$('#status').textContent=r.requested?`Stop requested for ${r.requested} analysis job${r.requested===1?'':'s'}; current image will finish first.`:'No active analysis jobs.';await refreshJobs()}catch(e){alert(e.message)}}
 const stopA=$('#stopAnalysisBtn'),stopB=$('#orderingStopAnalysisBtn');if(stopA)stopA.onclick=stopAnalysis;if(stopB)stopB.onclick=stopAnalysis;
@@ -1129,6 +1138,17 @@ async function startQuality(){
   if(r.state!=='done')$('#status').textContent=`Sanity ${r.id}: inspecting ${r.total||S.files.length} image${(r.total||S.files.length)===1?'':'s'}`;
  }catch(e){console.warn('Sanity start failed',e)}
 }
+function patchCachedBadges(files){
+ const map=files instanceof Map?files:new Map(files.map(f=>[f.path,f]));
+ const cards=new Set(document.querySelectorAll('#grid .card'));
+ for(const entry of S.virtualGrid.rowReady.values())for(const card of entry.node?.querySelectorAll('.card')||[])cards.add(card);
+ for(const card of cards){
+  const f=map.get(card.dataset.p);if(!f||f._n8Tombstone||f._n8ForwardTo)continue;
+  const box=card.querySelector('.badges');if(box)box.innerHTML=badges(f);
+  const identity=card.querySelector('.hoverIdentity'),q=qualityScore(f);
+  if(identity)identity.innerHTML=`<span>${esc(f.name)}</span>${q?`<span class="qualityScore">${q}</span>`:''}`;
+ }
+}
 let observationRefreshController=null;
 async function refreshObservations(preserveLayout=false){
  if(!S.files.length||S.viewer)return;
@@ -1137,36 +1157,28 @@ async function refreshObservations(preserveLayout=false){
   // Observation refresh is background telemetry. Never route a transient/empty response
   // through post(), whose alert is appropriate for explicit user actions.
   const files=S.files,targets=new Map();let revision=null;
+  const hot=new Set([...document.querySelectorAll('#grid .card')].map(card=>card.dataset.p));
+  const refreshFiles=[...files.filter(f=>hot.has(f.path)),...files.filter(f=>!hot.has(f.path))];
   for(const f of files)targets.set(f.path,new Set([f]));
   for(const catalog of rootCatalogs.values())for(const f of catalog.files||[])if(targets.has(f.path))targets.get(f.path).add(f);
   for(let start=0;start<files.length;start+=50){
    if(controller.signal.aborted||S.viewer||files!==S.files)return;
-   const packet=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:files.slice(start,start+50).map(x=>x.path)}),signal:controller.signal});
+   const packet=await j('/api/observations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({paths:refreshFiles.slice(start,start+50).map(x=>x.path)}),signal:controller.signal});
    if(controller.signal.aborted||S.viewer||files!==S.files)return;
    // Only certify the first revision observed: later writes may affect prior batches.
    revision??=packet.revision;
    for(const [path,observations] of Object.entries(packet.observations||{})){for(const f of targets.get(path)||[])f.observations=observations;mobilePager?.rememberObservations(path,observations)}
+   patchCachedBadges(new Map(refreshFiles.slice(start,start+50).map(f=>[f.path,f])));
    await new Promise(resolve=>setTimeout(resolve,0));
   }
   const r={revision};
   S.obsRevision=String(r.revision??S.obsRevision).split('-')[0]+'-'+assetEpoch;if(preserveLayout){
-   const files=new Map(S.files.map(f=>[f.path,f]));
-   for(const entry of S.virtualGrid.rowReady.values()){
-    if(controller.signal.aborted||S.viewer)return;
-    for(const card of entry.node?.querySelectorAll('.card')||[]){
-     const f=files.get(card.dataset.p);if(!f)continue;
-     const box=card.querySelector('.badges');if(box)box.innerHTML=badges(f);
-     const identity=card.querySelector('.hoverIdentity'),q=qualityScore(f);
-     if(identity)identity.innerHTML=`<span>${esc(f.name)}</span>${q?`<span class="qualityScore">${q}</span>`:''}`;
-    }
-    await new Promise(resolve=>setTimeout(resolve,0));
-   }
    refreshSelectionUI();
   }else render();S.catalogObsRevision=Number(r.revision??S.catalogObsRevision??0);refreshDiscovered();
  }catch(e){if(e.name!=='AbortError')console.warn('Observation refresh failed',e)}finally{if(observationRefreshController===controller)observationRefreshController=null}
 }
 function fmtEta(sec){if(sec==null||!isFinite(sec))return'';sec=Math.max(0,Math.round(sec));const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),q=sec%60;return h?`${h}h ${m}m ETA`:m?`${m}m ${q}s ETA`:`${q}s ETA`}
-async function refreshJobsCore(){const r=await j('/api/jobs');for(const job of r.jobs){if(job.kind!=='subject-class-recognition'||job.state!=='done'||!job.result?.summary)continue;S.seenRecognitionJobs??=new Set();if(S.seenRecognitionJobs.has(job.id))continue;await synchronizeRecognitionPaths(job.result.paths||[]);await S.refreshRecognitionInspector?.(job.result.paths||[]);S.seenRecognitionJobs.add(job.id);$('#status').textContent=job.result.summary;if(job.result.applied)refreshDiscovered()}const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=(x.kind==='subject-class-training'||x.kind==='subject-class-recognition')?` · ${esc(x.result?.summary||x.phase||x.state)}`:verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!active&&!S.viewer&&Number(r.observation_revision||0)>Number(S.catalogObsRevision??-1)){invalidateVisibleAssets();await refreshObservations(true);S.obsRevision=String(r.observation_revision||S.obsRevision).split('-')[0]+'-'+assetEpoch}if(S.refreshSubjectClassStatus){const stamp=r.jobs.filter(job=>job.kind==='subject-class-training').map(job=>job.id+':'+job.state+':'+job.phase).join('|');if(stamp!==S.lastClassTrainingJob||S.classTrainingBusy){S.lastClassTrainingJob=stamp;await S.refreshSubjectClassStatus()}}return active||!!S.classTrainingBusy}
+async function refreshJobsCore(){const r=await j('/api/jobs');for(const job of r.jobs){if(job.kind!=='subject-class-recognition'||job.state!=='done'||!job.result?.summary)continue;S.seenRecognitionJobs??=new Set();if(S.seenRecognitionJobs.has(job.id))continue;await synchronizeRecognitionPaths(job.result.paths||[]);await S.refreshRecognitionInspector?.(job.result.paths||[]);S.seenRecognitionJobs.add(job.id);$('#status').textContent=job.result.summary;if(job.result.applied)refreshDiscovered()}const active=r.jobs.some(x=>x.state==='queued'||x.state==='running'||x.state==='recovering');const jobHost=(S.mode==='ordering'?$('#orderingJobs'):$('#jobs'));const jobHTML=r.jobs.length?r.jobs.slice(0,6).map(x=>{const verifying=x.phase==='verifying';const rate=!verifying&&x.items_per_second!=null?` · ${Number(x.items_per_second).toFixed(Number(x.items_per_second)>=10?1:2)} p/s`:'';const eta=!verifying&&x.state==='running'&&x.eta_seconds!=null?` · ${fmtEta(x.eta_seconds)}`:'';const phase=(x.kind==='subject-class-training'||x.kind==='subject-class-recognition')?` · ${esc(x.result?.summary||x.phase||x.state)}`:verifying?' · verifying…':x.phase==='recovering'?' · recovering…':'';const tel=x.telemetry?`<br><span class="tiny">${esc(x.telemetry.device||'')} ${x.telemetry.model_device?`· model ${esc(x.telemetry.model_device)}`:''} ${x.telemetry.model_dtype?`· ${esc(x.telemetry.model_dtype)}`:''}${x.telemetry.batch_size?` · batch ${x.telemetry.batch_size}`:''}${x.telemetry.inference_batch?` · infer ${x.telemetry.inference_batch}`:''}${x.telemetry.tuning?' · tuning':''}${x.telemetry.target_pps?` · target ${Number(x.telemetry.target_pps).toFixed(2)} p/s`:''}${x.telemetry.stage_seconds?`<br>stages ${Object.entries(x.telemetry.stage_seconds).map(([k,v])=>`${esc(k)} ${Number(v).toFixed(2)}s`).join(' · ')}`:''}</span>`:'';return `<div class="job"><b>${esc(x.kind)}</b> · ${esc(x.state)} · ${x.done}/${x.total}${phase}${rate}${eta}${tel}${x.current_model?`<br>${esc(x.current_model)} · model ${x.model_index}/${x.model_total} · ${x.model_done}/${x.model_images} images · ${x.detections||0} detections${x.last_image?`<br><span class="tiny">${esc(x.last_image)} · returned ${x.last_returned??0} · stored ${x.last_stored??0}</span>`:''}`:''}${x.error?`<br><span class="err">${esc(x.error)}</span>`:''}<div class="jobbar"><i style="width:${x.total?100*x.done/x.total:0}%"></i></div></div>`}).join(''):'None';if(jobHost&&jobHost._n8HTML!==jobHTML){jobHost.innerHTML=jobHTML;jobHost._n8HTML=jobHTML}/* Keep telemetry polling cheap while analysis is active. Observation refresh can be much heavier than /api/jobs and used to hold this poll open long enough to make chunk progress appear frozen. */if(!S.viewer&&!observationRefreshController&&Number(r.observation_revision||0)>Number(S.catalogObsRevision??-1)&&(!active||performance.now()-(S.lastBadgeRefresh||-5000)>=5000)){S.lastBadgeRefresh=performance.now();if(active)refreshObservations(true);else await refreshObservations(true);}if(S.refreshSubjectClassStatus){const stamp=r.jobs.filter(job=>job.kind==='subject-class-training').map(job=>job.id+':'+job.state+':'+job.phase).join('|');if(stamp!==S.lastClassTrainingJob||S.classTrainingBusy){S.lastClassTrainingJob=stamp;await S.refreshSubjectClassStatus()}}return active||!!S.classTrainingBusy}
 
 // P.47: the job seeker is unemployed until there is work. One settling read is allowed;
 // polling exists only while queued/running jobs exist. Creating/stopping/dispatching work calls
@@ -1427,19 +1439,35 @@ async function deleteSelected(){
  catch(error){alert(error.message)}finally{paths.forEach(p=>pendingDeletes.delete(canonPath(p)));showDeletePending(paths,false)}
 }$('#deleteBtn').onclick=deleteSelected;
 let moveParent=null,moveBrowseVersion=0,lastMoveDestination=null;
-const moveDirectoryCache=createMoveDirectoryCache({fetch:path=>j(`/api/directories?path=${enc(path)}`),key:canonPath});
+const unknownMoveDirectories=new Set(),moveDirectoryRequests=new Map();
 function displayMoveDirectory(d){
  moveParent=d.parent;$('#movePath').value=d.path;
- $('#moveFolders').innerHTML=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');
+ const html=d.directories.map(x=>`<div class="moveFolder" data-p="${esc(x.path)}">${esc(x.name)}</div>`).join('');
+ if($('#moveFolders').innerHTML!==html)$('#moveFolders').innerHTML=html;
  document.querySelectorAll('.moveFolder').forEach(x=>x.ondblclick=()=>moveBrowse(x.dataset.p));$('#moveConfirm').disabled=false;
 }
+function refreshOpenMoveDirectory(){
+ if(!$('#moveDialog').open)return;
+ const data=folderArchitecture.read($('#movePath').value);if(data)displayMoveDirectory(data);else{$('#moveConfirm').disabled=true;$('#moveFolders').textContent='This location is no longer in the folder tree.';}
+}
+async function discoverMoveDirectory(path){
+ const key=canonPath(path);if(moveDirectoryRequests.has(key))return moveDirectoryRequests.get(key);
+ const request=j(`/api/directories?path=${enc(path)}`).then(data=>{folderArchitecture.replaceChildren(data);return data}).finally(()=>moveDirectoryRequests.delete(key));
+ moveDirectoryRequests.set(key,request);return request;
+}
+async function refreshExternalMoveDirectories(){
+ for(const path of unknownMoveDirectories){
+  if(folderArchitecture.covered(path))continue;
+  try{await discoverMoveDirectory(path);refreshOpenMoveDirectory()}catch(error){console.warn('Destination background check deferred',error)}
+ }
+}
 async function moveBrowse(path){
- const version=++moveBrowseVersion,cached=moveDirectoryCache.peek(path);
- $('#moveConfirm').disabled=true;
- if(cached)displayMoveDirectory(cached);else $('#moveFolders').textContent='Loading folders…';
- try{const d=await moveDirectoryCache.refresh(path);if(version!==moveBrowseVersion)return false;
-  if(!cached||JSON.stringify(cached)!==JSON.stringify(d))displayMoveDirectory(d);return true;
- }catch(error){if(version===moveBrowseVersion){$('#moveConfirm').disabled=true;$('#moveFolders').textContent='Folder unavailable: '+error.message}return false}
+ const version=++moveBrowseVersion,cached=folderArchitecture.read(path);
+ if(cached){displayMoveDirectory(cached);if(!folderArchitecture.complete(path)){unknownMoveDirectories.add(path);discoverMoveDirectory(path).then(data=>{if(version===moveBrowseVersion&&$('#moveDialog').open)displayMoveDirectory(data)}).catch(error=>console.warn('First complete folder listing deferred',error));}return true;}
+ $('#movePath').value=path;$('#moveConfirm').disabled=true;$('#moveFolders').textContent='Discovering this location for the first time…';
+ unknownMoveDirectories.add(path);
+ try{const data=await discoverMoveDirectory(path);if(version!==moveBrowseVersion)return false;displayMoveDirectory(data);return true}
+ catch(error){if(version===moveBrowseVersion)$('#moveFolders').textContent='Folder unavailable: '+error.message;return false}
 }
 const moveQueue=createMoveQueue({key:canonPath,
  queued(paths,destination){
@@ -1580,7 +1608,7 @@ const driveExportBtn=$('#driveExportBtn');if(driveExportBtn)driveExportBtn.oncli
 function updateDefaultRootLabel(){const e=$('#defaultRootValue');if(e)e.textContent=S.defaultRoot||'Not set'}
 const gridDetailSetting=$('#gridDetailSetting');if(gridDetailSetting)gridDetailSetting.onchange=async e=>{const mode=e.target.value;try{const r=await j('/api/config/display',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({grid_detail:mode})});S.gridDetail=r.grid_detail;document.body.dataset.gridDetail=S.gridDetail;render();$('#status').textContent=`Observation badges: ${S.gridDetail}.`}catch(err){alert(err.message)}};
 const gridGapSetting=$('#gridGapSetting');if(gridGapSetting)gridGapSetting.oninput=e=>{S.gridGapTenths=Number(e.target.value)||0;document.documentElement.style.setProperty('--grid-gap-tenths',S.gridGapTenths);$('#gridGapValue').textContent=(S.gridGapTenths/10).toFixed(1)+'vw';invalidateRingLayout();render()};if(gridGapSetting)gridGapSetting.onchange=async()=>{try{await j('/api/config/display',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({grid_detail:S.gridDetail,grid_gap_tenths:S.gridGapTenths})})}catch(err){alert(err.message)}};
-const sanityBadgeSetting=$('#sanityBadgeSetting');if(sanityBadgeSetting)sanityBadgeSetting.onchange=async e=>{const mode=e.target.value;try{const r=await j('/api/config/sanity-display',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sanity_badges:mode})});S.sanityBadges=r.sanity_badges;render();$('#status').textContent=`Sanity badges: ${S.sanityBadges}.`}catch(err){alert(err.message)}};
+const sanityBadgeSetting=$('#sanityBadgeSetting');if(sanityBadgeSetting)sanityBadgeSetting.onchange=async e=>{const mode=e.target.value;try{const r=await j('/api/config/sanity-display',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({sanity_badges:mode})});S.sanityBadges=r.sanity_badges;patchCachedBadges(S.files);render();$('#status').textContent=`Sanity badges: ${S.sanityBadges}.`}catch(err){alert(err.message)}};
 const setDefaultRootBtn=$('#setDefaultRootBtn');if(setDefaultRootBtn)setDefaultRootBtn.onclick=async()=>{if(!S.path)return alert('Open a library root first.');try{const r=await j('/api/config/default-root',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:S.path})});S.defaultRoot=r.default_root;updateDefaultRootLabel();$('#status').textContent='Current root saved as startup default.'}catch(e){alert(e.message)}};
 const clearDefaultRootBtn=$('#clearDefaultRootBtn');if(clearDefaultRootBtn)clearDefaultRootBtn.onclick=async()=>{try{await j('/api/config/default-root',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({path:null})});S.defaultRoot=null;updateDefaultRootLabel();$('#status').textContent='Default root cleared.'}catch(e){alert(e.message)}};
 const saveFilterPresetBtn=$('#saveFilterPresetBtn');if(saveFilterPresetBtn)saveFilterPresetBtn.onclick=async()=>{const suggested=$('#filterPresetSelect')?.value||'',name=prompt('Filter preset name:',suggested);if(!name)return;try{const r=await j('/api/filter-presets',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,state:presetState()})});S.filterPresets=r.presets||{};refreshPresetSelect();$('#filterPresetSelect').value=name.trim();$('#status').textContent=`Saved filter preset: ${name.trim()}`}catch(e){alert(e.message)}};
@@ -1660,6 +1688,17 @@ function startupNotice(id,heading,body){
  card.querySelector('.startupNoticeDetail').textContent=body;
 }
 function scheduleLaunchVerification(ms){clearTimeout(launchVerifyTimer);launchVerifyTimer=setTimeout(()=>{launchVerifyTimer=0;checkLaunchVerification()},ms)}
+function interruptedJobDetails(job){
+ if(job.state==='invalid')return 'Previous job details could not be recovered.\n'+(job.error||'Journal was unreadable.');
+ const lines=[`${job.kind||'Unknown operation'}${job.id?' · '+job.id:''}`,`Last recorded step: ${job.phase||job.state||'unknown'}`];
+ if(Number(job.total)>0)lines.push(`${job.done||0} of ${job.total} recorded`);
+ if(job.recovery)lines.push(`${job.recovery.recovered||0} outputs recovered · ${job.recovery.failed||0} failed`);
+ if(job.current_model)lines.push('Model: '+job.current_model);
+ if(job.last_image)lines.push('Last image: '+job.last_image);
+ if(job.updated)lines.push('Last update: '+new Date(job.updated*1000).toLocaleString());
+ if(job.error)lines.push('Error: '+job.error);
+ return lines.join('\n');
+}
 async function checkLaunchVerification(){
  if(launchVerifyBusy)return;
  launchVerifyBusy=true;
@@ -1670,8 +1709,8 @@ async function checkLaunchVerification(){
   if(r.error){startupNotice('launchVerifyError','Archive verification warning',String(r.error)+'\nBrowsing remains available; no analysis was discarded.');return}
   if(r.abandoned_jobs?.count && !staleJobReportShown){
    staleJobReportShown=true;
-   const js=(r.abandoned_jobs.jobs||[]).slice(0,6).map(x=>`${x.kind} · ${x.state} · ${x.done||0}/${x.total||0}`).join('\n');
-   startupNotice('launchStaleJobs',`${r.abandoned_jobs.count} unfinished job(s) from the previous session`,`${js}${r.abandoned_jobs.count>6?'\n…':''}\nThe stale queue was purged before launch. Completed archive results were preserved.`);
+   const js=(r.abandoned_jobs.jobs||[]).slice(0,6).map(interruptedJobDetails).join('\n\n');
+   startupNotice('launchStaleJobs',`${r.abandoned_jobs.count} unfinished job(s) from the previous session`,`${r.abandoned_jobs.from_backup?'Details recovered from the previous journal backup.\n\n':''}${js}${r.abandoned_jobs.count>6?'\n…':''}\n\nInterrupted work was not resumed. Completed archive results were preserved. Details describe the last recorded checkpoint, not the exact crash location.`);
   }
   if(r.missing && !launchOfferShown){
    launchOfferShown=true;
@@ -1703,11 +1742,89 @@ function pathDirectlyInRoot(path,root){const p=String(path||'').replace(/\//g,'\
 function pathInRoot(path,root,recursive){const p=canonPath(path),r=canonPath(root);return recursive?(p===r||p.startsWith(r+'\\')):pathDirectlyInRoot(path,root)}
 function currentViewRoots(){const selected=[...S.scopeSelections];return selected.length?selected:[S.scopeRoot].filter(Boolean)}
 function batchIntersectsCurrentView(batch){const roots=currentViewRoots();if(!roots.length)return false;return [...(batch.sources||[]),...(batch.targets||[])].some(p=>roots.some(r=>pathInRoot(p,r,!!S.scopeRecursive)))}
-async function refreshCurrentViewData(){const roots=currentViewRoots();if(!roots.length)return;const home=tempHomePath(),recursive=!!S.scopeRecursive,r=await post('/api/view-refresh',{roots,recursive}),fresh=r.files||[],under=p=>roots.some(root=>pathInRoot(p,root,recursive));S.files=S.files.filter(f=>!under(f.path));const have=new Set(S.files.map(f=>canonPath(f.path)));for(const f of fresh)if(!have.has(canonPath(f.path))){S.files.push(f);have.add(canonPath(f.path))}S.virtualGrid.rowReady=new Map();S.virtualGrid.prepGeneration++;invalidateRingLayout();renderScopeFolders();render();requestAnimationFrame(()=>{pinTempHome(home);paintRing()})}
-function gridRefreshNotice(){let d=$('#gridRefreshNotice');if(!d){d=document.createElement('div');d.id='gridRefreshNotice';d.className='gridRefreshNotice';document.body.appendChild(d)}d.textContent='Hold for grid refresh — 2s';d.classList.add('show');return d}
-async function automaticGridRefresh(){const d=gridRefreshNotice();await new Promise(r=>setTimeout(r,2000));d.classList.remove('show');await refreshCurrentViewData();$('#status').textContent=`Grid refreshed · ${visibleFiles().length.toLocaleString()} shown`}
+const besideLinks=new Map(),besideRecords=new Map();
+function applyBesideOrder(files){
+ const existing=new Set(files.map(f=>canonPath(f.path))),list=files.slice();
+ for(const link of besideLinks.values())if(existing.has(canonPath(link.source))&&!existing.has(canonPath(link.target))){const record=besideRecords.get(canonPath(link.target));if(record){list.push(record);existing.add(canonPath(record.path))}}
+ return placeBesideOutputs(list,besideLinks.values(),canonPath);
+}
+function mergeVerifiedFile(previous,fresh){
+ const file={...previous,...fresh};
+ delete file._n8Tombstone;delete file._n8ForwardTo;
+ return file;
+}
+async function prepareRefreshedView(nextFiles,home){
+ const v=S.virtualGrid,oldFiles=S.files,oldLayout=v.layoutCache;
+ let display,layout;
+ try{S.files=nextFiles;v.layoutCache=null;display=visibleFiles();layout=virtualGridLayout(display)}finally{S.files=oldFiles;v.layoutCache=oldLayout}
+ let cursor=home?layout.rows.findIndex(row=>row.some(x=>x.f.path===home)):-1;
+ if(cursor<0)cursor=Math.max(0,Math.min(v.cursor,layout.rows.length-1));
+ let count=Math.min(layout.rows.length,Math.max(1,layout.viewRows||1));
+ if(pagedBrowse())count=Math.min(count,Math.max(0,layout.rows.length-cursor));
+ if(S.mobile){count=0;let height=0;while(cursor+count<layout.rows.length&&height<layout.gh){height+=mobileRowHeight(layout.rows[cursor+count])+layout.gap;count++}}
+ const entries=new Map();
+ const ready=await Promise.all(Array.from({length:count},async(_,offset)=>{
+  const index=mod(cursor+offset,layout.rows.length),spec=layout.rows[index],node=bindRingRow(null,spec,index);
+  const results=await Promise.all([...node.querySelectorAll('img')].map(hydratePrefabImage));
+  if(!results.every(Boolean))return false;
+  entries.set(rowKey(spec),{state:'ready',node,promise:Promise.resolve(true)});return true;
+ }));
+ return {ready:ready.every(Boolean),entries,cursor,oldLayout};
+}
+async function refreshCurrentViewData(batch=null){
+ const roots=currentViewRoots();if(!roots.length)return false;
+ const root=S.scopeRoot,files=S.files,viewKey=selectionViewKey(),recursive=!!S.scopeRecursive;
+ const links=batch?.outputs||[],under=p=>roots.some(r=>pathInRoot(p,r,recursive));
+ const paths=[...new Set(links.flatMap(link=>[link.source,link.target]).filter(under))];
+ const r=await post('/api/view-refresh',paths.length?{paths}:{roots,recursive});
+ if(S.scopeRoot!==root||selectionViewKey()!==viewKey||(!paths.length&&S.files!==files))return false;
+ const home=tempHomePath();
+ const commitFiles=S.files,commitLength=S.files.length,epoch=assetEpoch;
+ const fresh=new Map((r.files||[]).map(f=>[canonPath(f.path),f]));
+ let nextFiles;
+ for(const link of links)if(link.destination==='beside'&&fresh.has(canonPath(link.target))){besideLinks.set(canonPath(link.target),link);besideRecords.set(canonPath(link.target),mergeVerifiedFile(null,fresh.get(canonPath(link.target))))}
+ if(paths.length){
+  const merged=S.files.map(f=>fresh.has(canonPath(f.path))?mergeVerifiedFile(f,fresh.get(canonPath(f.path))):f);
+  if(!pagedBrowse())for(const [key,file] of fresh)if(!merged.some(f=>canonPath(f.path)===key))merged.push(file);
+  nextFiles=applyBesideOrder(merged);
+ }else{
+  const outside=files.filter(f=>!under(f.path));nextFiles=applyBesideOrder([...outside,...fresh.values()]);
+ }
+ const prepared=await prepareRefreshedView(nextFiles,home);
+ if(!prepared.ready||S.viewer||S.scopeRoot!==root||selectionViewKey()!==viewKey||S.files!==commitFiles||S.files.length!==commitLength||tempHomePath()!==home||assetEpoch!==epoch||S.virtualGrid.layoutCache!==prepared.oldLayout)return false;
+ S.files=nextFiles;mobilePager?.acceptVerified?.(S.files.filter(f=>fresh.has(canonPath(f.path))));rememberRootCatalog();
+ S.virtualGrid.rowReady=prepared.entries;S.virtualGrid.prepGeneration++;S.virtualGrid.prepQueue=[];S.virtualGrid.cursor=prepared.cursor;
+ invalidateRingLayout();renderScopeFolders();render({anchor:home});refreshSelectionUI();return true;
+}
+function gridRefreshNotice(){let d=$('#gridRefreshNotice');if(!d){d=document.createElement('div');d.id='gridRefreshNotice';d.className='gridRefreshNotice';document.body.appendChild(d)}d.textContent='Hold for grid refresh — 5s';d.classList.add('show');return d}
+async function automaticGridRefresh(batch=null){
+ const notice=gridRefreshNotice();
+ try{await new Promise(resolve=>setTimeout(resolve,5000));notice.textContent='Preparing refreshed cards…';const applied=await refreshCurrentViewData(batch);if(applied)$('#status').textContent=`Grid refreshed · ${visibleFiles().length.toLocaleString()} shown`;return applied}
+ finally{notice.classList.remove('show')}
+}
+const pendingComfyRefreshes=new Map();let comfyRefreshBusy=false;
+async function drainComfyRefreshes(){
+ if(comfyRefreshBusy||S.viewer||!S._rootBrowseComplete)return;
+ comfyRefreshBusy=true;
+ try{for(const [id,batch] of pendingComfyRefreshes){
+  if(!batchIntersectsCurrentView(batch))continue;
+  if(await automaticGridRefresh(batch))pendingComfyRefreshes.delete(id);
+ }}catch(error){console.warn('Comfy grid refresh retained for retry',error)}finally{comfyRefreshBusy=false}
+}
 const watchedComfyBatches=new Set();
-async function watchComfyBatch(id){if(!id||watchedComfyBatches.has(id))return;watchedComfyBatches.add(id);try{for(;;){await new Promise(r=>setTimeout(r,1000));let b;try{b=await j(`/api/comfy/recovery-batch/${enc(id)}`)}catch(e){if(String(e.message).includes('404'))return;continue}if(!b.complete)continue;if(batchIntersectsCurrentView(b))await automaticGridRefresh();return}}finally{watchedComfyBatches.delete(id)}}
+function comfyBatchStatus(label,count,total,details='',failed=0){return `${label} · ${count} Complete · ${total} images queued${details?' · '+details:''}${failed?' · '+failed+' failed':''}`}
+async function watchComfyBatch(id,label='Comfy '+id,details=''){
+ if(!id||watchedComfyBatches.has(id))return;watchedComfyBatches.add(id);
+ try{for(;;){
+  await new Promise(r=>setTimeout(r,1000));let batch;
+  try{batch=await j(`/api/comfy/recovery-batch/${enc(id)}`)}catch(error){if(String(error.message).includes('404'))return;continue}
+  const text=comfyBatchStatus(label,Number(batch.recovered||0),batch.total,details,Number(batch.failed||0)),status=$('#status');
+  if(status.textContent.includes(id))status.textContent=text;
+  if(!batch.complete)continue;
+  if((batch.outputs||[]).some(x=>x.destination!=='comfy')){pendingComfyRefreshes.set(id,batch);await drainComfyRefreshes();if(!pendingComfyRefreshes.has(id)&&status.textContent.startsWith('Grid refreshed'))status.textContent=text+' · grid refreshed';}
+  return;
+ }}finally{watchedComfyBatches.delete(id)}
+}
 
 async function returnToOrigin(){
  if(pagedBrowse()&&mobilePager){S.mobileNavigationPosition=0;S.mobileNavigationDirty=false;const pager=mobilePager,snapshot=await pager.focus(0);if(snapshot&&pager===mobilePager)await applyMobileSnapshot(snapshot,snapshot.files[0]?.path,pager);return;}
@@ -1743,7 +1860,7 @@ async function redrawGrid(){
   // Compact only on explicit redraw; preserve valid prefabs and decoded thumbnails.
   S.files=S.files.filter(f=>!f._n8Tombstone);
   const files=S.files,root=S.scopeRoot;
-  invalidateRingLayout();render();pinTempHome(home);paintRing();
+  invalidateRingLayout();render({anchor:home});
   const v=S.virtualGrid,pool=ringPool(virtualGridLayout(v.files),v.cursor),ready=[];
   for(let i=0;i<pool.count;i++)ready.push(prepareRow(pool.first+i));
   await Promise.all(ready);
@@ -1807,15 +1924,15 @@ function candidates(role,tools){const preferred={source:['LoadImage'],checkpoint
  });return found.sort((a,b)=>{const pa=preferred[role]?.indexOf(a.type)??-1,pb=preferred[role]?.indexOf(b.type)??-1;return (pa<0?999:pa)-(pb<0?999:pb)||String(a.display_name||a.type).localeCompare(String(b.display_name||b.type))})}
 const refineRoles=[['source','Image source'],['checkpoint','Checkpoint / foundation'],['lora','LoRA loader (repeatable 0..N)'],['encode','VAE encode'],['text','Text conditioning'],['sampler','Sampler'],['decode','VAE decode'],['output','Image output']];
 function schemaChoices(tool,needle){
- const all={...(tool?.inputs?.required||{}),...(tool?.inputs?.optional||{})};for(const [name,spec] of Object.entries(all)){if(!name.toLowerCase().includes(needle))continue;const typ=Array.isArray(spec)?spec[0]:null;if(Array.isArray(typ))return typ.map(String)}return []
+ const all={...(tool?.inputs?.required||{}),...(tool?.inputs?.optional||{})};for(const [name,spec] of Object.entries(all)){if(!name.toLowerCase().includes(needle))continue;const typ=Array.isArray(spec)?spec[0]:null;if(Array.isArray(typ))return typ.map(String);if(typ==='COMBO'&&Array.isArray(spec[1]?.options))return spec[1].options.map(String)}return []
 }
 async function loadRefineRecipe(){if(!S.capabilities.processing)return;try{const r=await j('/api/refinement/recipe');S.refineRecipe=r.recipe||{};$('#refinerStatus').textContent=S.refineRecipe?.roles?`Recipe ready · ${S.refineRecipe.name||'Refine SDXL'} · LoRA chain 0..N`:'No refinement recipe configured.'}catch(e){$('#refinerStatus').textContent='Refinement recipe unavailable.'}}
-async function deleteRefineRecipe(){const name=S.refineRecipe?.name||'Refine SDXL';if(!S.refineRecipe?.roles)return;if(!confirm(`Delete refinement graph \"${name}\"?\n\nThis removes the remembered graph. It does not delete Comfy workflows, models, or images.`))return;try{await j('/api/refinement/recipe',{method:'DELETE'});S.refineRecipe={};await loadRefineRecipe();$('#status').textContent=`Deleted graph · ${name}`;}catch(e){alert(e.message)}}
+async function deleteRefineRecipe(){await loadRefineRecipe();const name=S.refineRecipe?.name||'Refine SDXL';if(!S.refineRecipe?.roles)return;if(!confirm(`Delete refinement graph \"${name}\"?\n\nThis removes the remembered graph. It does not delete Comfy workflows, models, or images.`))return;try{await j('/api/refinement/recipe',{method:'DELETE'});S.refineRecipe={};await loadRefineRecipe();$('#status').textContent=`Deleted graph · ${name}`;}catch(e){alert(e.message)}}
 async function refineEnvironments(){const r=await j('/api/environments');return (r.environments||[]).filter(x=>x.kind==='comfy'&&x.online)}
 async function inspectShelf(env){const r=await j('/api/comfy/tool-shelf/'+enc(env));S.refineShelf=r;return r}
 function renderRolePickers(){const tools=S.refineShelf?.tools||[],old=S.refineRecipe?.roles||{};$('#refineRoles').innerHTML=refineRoles.map(([key,label])=>{const cs=candidates(key,tools);return `<label class="refineRole"><span>${esc(label)}</span><select data-role="${key}">${cs.map(t=>`<option value="${esc(t.type)}" ${old[key]?.type===t.type?'selected':''}>${esc(t.display_name||t.type)} · ${esc(t.category||'uncategorized')}</option>`).join('')}</select><small>${cs.length}</small></label>`}).join('')||'<div class="tiny">No compatible tools reported.</div>'}
 async function openGraphWizard(){
- S.refineMode='graph';$('#refineWizardTitle').textContent='Set Up Refine SDXL';$('#refineGraphStage').hidden=false;$('#refineRunStage').hidden=true;$('#refineWizardNext').textContent='Save Graph';$('#refineWizard').hidden=false;
+ S.refineMode='graph';$('#refineRunActions').hidden=true;$('#refineWizardTitle').textContent='Set Up Refine SDXL';$('#refineGraphStage').hidden=false;$('#refineRunStage').hidden=true;$('#refineWizardNext').textContent='Save Graph';$('#refineWizard').hidden=false;
  try{const envs=await refineEnvironments();if(!envs.length)throw new Error('No online Comfy environment. Start Comfy with Comfy-Finder P.06.');$('#refineEnvironment').innerHTML=envs.map(x=>`<option value="${esc(x.id)}">${esc(x.name)} · ${esc(x.bridge||'bridge')}</option>`).join('');const preferred=S.refineRecipe?.environment_id;if(preferred&&envs.some(x=>x.id===preferred))$('#refineEnvironment').value=preferred;await inspectShelf($('#refineEnvironment').value);renderRolePickers();$('#refineWizardSub').textContent=`${S.refineShelf.tools.length} installed tools inspected · nothing will be installed`;$('#refineWizardFoot').textContent='Topology is fixed except the declared repeatable LoRA chain.'}catch(e){$('#refineWizardSub').textContent=e.message;$('#refineRoles').innerHTML=''}
 }
 $('#refineEnvironment').onchange=async()=>{try{await inspectShelf($('#refineEnvironment').value);renderRolePickers()}catch(e){alert(e.message)}};
@@ -1823,15 +1940,58 @@ function historicalChoiceMatch(opts,name){if(!name)return '';const norm=x=>Strin
 function refineRunValidity(){
  const missing=[];const model=$('#refineModel');if(model?.classList.contains('historicalMissing'))missing.push(`checkpoint: ${model.value}`);
  document.querySelectorAll('.refineLoraName.historicalMissing').forEach(x=>missing.push(`LoRA: ${x.value}`));
- const runMode=S.refineMode==='run',btn=$('#refineWizardNext');if(runMode&&btn)btn.disabled=missing.length>0;
- if(runMode){const tn=(typeof refineryTranslationNeeds==='function'?refineryTranslationNeeds():[]);if(btn)btn.disabled=missing.length>0||tn.length>0;$('#refineWizardFoot').textContent=missing.length?`Cannot execute · unresolved ${missing.join(' · ')}`:tn.length?`Translation required before Execute · ${tn.length} prompt field${tn.length===1?'':'s'}`:'Ready · graph dependencies and prompt dialect resolve.'}
+ for(const id of ['refineSampler','refineScheduler'])if($('#'+id)?.selectedOptions?.[0]?.dataset.historical==='1')missing.push(id==='refineSampler'?'sampler':'scheduler');
+ const runMode=S.refineMode==='run',btn=$('#refineWizardNext');if(runMode&&!['replace','beside','comfy'].includes($('#refineDestination').value))missing.push('output destination');if(runMode&&btn)btn.disabled=missing.length>0||!refineSettingsReady;
+ if(runMode){const tn=(typeof refineryTranslationNeeds==='function'?refineryTranslationNeeds():[]);if(btn)btn.disabled=missing.length>0||tn.length>0||!refineSettingsReady;$('#refineWizardFoot').textContent=missing.length?`Cannot execute · unresolved ${missing.join(' · ')}`:tn.length?`Translation required before Execute · ${tn.length} prompt field${tn.length===1?'':'s'}`:'Ready · graph dependencies and prompt dialect resolve.'}
  return missing
 }
 function setHistoricalState(sel,missing){sel.classList.toggle('historicalMissing',!!missing);sel.title=missing?'Recorded in image metadata; not currently resolved in this Comfy environment.':'';sel.onchange=()=>{const valid=[...sel.options].some(o=>o.value===sel.value&&!o.dataset.historical);sel.classList.toggle('historicalMissing',!valid&&!!sel.value);sel.title=sel.classList.contains('historicalMissing')?'Recorded in image metadata; not currently resolved in this Comfy environment.':'';refineRunValidity();if(sel.id==='refineModel'){S.refineTranslations={};updateRefineDialectUI();}}}
 function addLoraRow(name='',model=1,clip=1){const opts=schemaChoices((S.refineShelf?.tools||[]).find(t=>t.type===S.refineRecipe?.roles?.lora?.type),'lora');const match=historicalChoiceMatch(opts,name),missing=!!name&&!match;const historical=missing?`<option value="${esc(name)}" data-historical="1" selected>${esc(name)}</option>`:'';const row=document.createElement('div');row.className='refineLoraRow';row.innerHTML=`<select class="refineLoraName"><option value="">Choose LoRA…</option>${historical}${opts.map(x=>`<option ${x===match?'selected':''}>${esc(x)}</option>`).join('')}</select><span><input class="refineLoraModel" type="number" step=".05" value="${esc(model)}" title="Model strength"><input class="refineLoraClip" type="number" step=".05" value="${esc(clip)}" title="CLIP strength"></span><button type="button">×</button>`;const sel=row.querySelector('.refineLoraName');setHistoricalState(sel,missing);row.querySelector('button').onclick=()=>{row.remove();refineRunValidity()};$('#refineLoras').appendChild(row);refineRunValidity()}
-async function openRunWizard(){
- if(!S.refineRecipe?.roles)return openGraphWizard();const paths=S.selected.size?[...S.selected]:visibleFiles().map(x=>x.path);if(!paths.length)return alert('Select images, or leave selection empty to refine the shown set.');S.refineMode='run';S.refinePaths=paths;S.refineTranslations={};$('#refineWizardTitle').textContent='Refine SDXL';$('#refineGraphStage').hidden=true;$('#refineRunStage').hidden=false;$('#refineWizardNext').textContent='Refine SDXL';$('#refineWizard').hidden=false;$('#refinePromptAdapter').hidden=true;
- try{await inspectShelf(S.refineRecipe.environment_id);try{S.checkpointLibrary=await j('/api/comfy/checkpoint-library')}catch(_e){}const mr=await post('/api/refinement/metadata',{paths});S.refineMetadata=mr.items||[];const m=S.refineMetadata[0]?.metadata||{};const cp=(S.refineShelf.tools||[]).find(t=>t.type===S.refineRecipe.roles.checkpoint.type);const models=[...new Set([...schemaChoices(cp,'ckpt'),...schemaChoices(cp,'model')])];const modelMatch=historicalChoiceMatch(models,m.model),modelMissing=!!m.model&&!modelMatch;$('#refineModel').innerHTML=(modelMissing?`<option value="${esc(m.model)}" data-historical="1" selected>${esc(m.model)}</option>`:'')+models.map(x=>`<option ${x===modelMatch?'selected':''}>${esc(x)}</option>`).join('');setHistoricalState($('#refineModel'),modelMissing);$('#refinePositive').value=m.positive||'';$('#refineNegative').value=m.negative||'';$('#refineSeed').value=m.seed??0;$('#refineSourceSteps').value=Math.max(0,Number(m.steps??0));$('#refineSteps').value=10;$('#refineCfg').value=m.cfg??8;const st=(S.refineShelf.tools||[]).find(t=>t.type===S.refineRecipe.roles.sampler.type);const samplers=schemaChoices(st,'sampler'),schedulers=schemaChoices(st,'scheduler');$('#refineSampler').innerHTML=samplers.map(x=>`<option ${m.sampler===x?'selected':''}>${esc(x)}</option>`).join('');$('#refineScheduler').innerHTML=schedulers.map(x=>`<option ${m.scheduler===x?'selected':''}>${esc(x)}</option>`).join('');$('#refineLoras').innerHTML='';(m.loras||[]).forEach(x=>addLoraRow(x.name,x.weight||1,x.weight||1));$('#refineWizardSub').textContent=`${paths.length} image${paths.length===1?'':'s'} · ${S.refineRecipe.name||'Refine SDXL'}${paths.length>1?' · one setup, per-image recovered prompts':''}`;updateRefineDialectUI()}catch(e){alert(e.message)}
+const refineSettingsStore=createRefineSettingsStore(localStorage);
+let refineSettingsReady=false;
+function refineSettingsSignature(){return JSON.stringify([S.refineRecipe?.environment_id,Object.entries(S.refineRecipe?.roles||{}).sort(([a],[b])=>a.localeCompare(b)).map(([key,role])=>[key,role.type])])}
+function currentRefineSettings(){return {upscale_settings:upscaleRunSettings(),model:$('#refineModel').value,refinement_steps:Number($('#refineSteps').value),cfg:Number($('#refineCfg').value),sampler:$('#refineSampler').value,scheduler:$('#refineScheduler').value,loras:[...document.querySelectorAll('.refineLoraRow')].map(row=>({name:row.querySelector('.refineLoraName').value,model_strength:Number(row.querySelector('.refineLoraModel').value),clip_strength:Number(row.querySelector('.refineLoraClip').value)})).filter(lora=>lora.name)}}
+function rememberRefineSettings(){if(S.refineMode==='run'&&refineSettingsReady)refineSettingsStore.save(refineSettingsSignature(),currentRefineSettings())}
+function restoreRefineSettings(){
+ const saved=refineSettingsStore.read(refineSettingsSignature());if(!saved)return;for(const el of document.querySelectorAll('#ultimateUpscaleControls [data-upscale]')){const value=saved.upscale_settings?.[el.dataset.upscale];if(value!==undefined){if(el.type==='checkbox')el.checked=!!value;else el.value=value}}
+ for(const [id,value] of [['refineModel',saved.model],['refineSampler',saved.sampler],['refineScheduler',saved.scheduler]]){
+  const select=$('#'+id);if(value&&!Array.from(select.options).some(option=>option.value===value)){const option=document.createElement('option');option.value=value;option.textContent=value+' (unavailable)';option.dataset.historical='1';select.append(option)}
+  if(value)select.value=value;setHistoricalState(select,select.selectedOptions?.[0]?.dataset.historical==='1');
+ }
+ if(Number.isFinite(saved.refinement_steps))$('#refineSteps').value=saved.refinement_steps;
+ if(Number.isFinite(saved.cfg))$('#refineCfg').value=saved.cfg;
+ $('#refineLoras').innerHTML='';for(const lora of saved.loras||[])addLoraRow(lora.name,lora.model_strength??1,lora.clip_strength??1);
+}
+$('#refineKeepSettings').checked=refineSettingsStore.enabled(refineSettingsSignature());
+$('#refineKeepSettings').onchange=event=>{refineSettingsStore.enable(refineSettingsSignature(),event.target.checked);rememberRefineSettings()};
+$('#refineRunStage').addEventListener('input',rememberRefineSettings);
+$('#refineRunStage').addEventListener('change',rememberRefineSettings);
+$('#refineLoras').addEventListener('click',()=>queueMicrotask(rememberRefineSettings));
+$('#refineAddLora').addEventListener('click',()=>queueMicrotask(rememberRefineSettings));
+$('#refineWizardClose').addEventListener('click',rememberRefineSettings);
+function upscaleRunSettings(){return Object.fromEntries([...document.querySelectorAll('#ultimateUpscaleControls [data-upscale]')].map(el=>[el.dataset.upscale,el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value]))}
+function renderUpscaleControls(){
+ const box=$('#ultimateUpscaleControls');box.hidden=S.refineRecipe?.kind!=='ultimate_upscale';box.innerHTML='';if(box.hidden)return;
+ const roles=S.refineRecipe.roles,defaults=S.refineRecipe.defaults;
+ const make=(name,spec,value)=>{const type=spec[0],cfg=spec[1]||{},label=document.createElement('label');label.textContent=name.replaceAll('_',' ');let input;
+ if(Array.isArray(type)){input=document.createElement('select');for(const v of type){const option=document.createElement('option');option.value=v;option.textContent=v;input.append(option)}input.value=type.includes(value)?value:type[0]}
+ else{input=document.createElement('input');input.type=type==='BOOLEAN'?'checkbox':'number';if(type==='BOOLEAN')input.checked=!!value;else{input.value=value;if(cfg.min!==undefined)input.min=cfg.min;if(cfg.max!==undefined)input.max=cfg.max;input.step=type==='INT'?1:(cfg.step||0.01)}}
+ input.dataset.upscale=name;input.title=cfg.tooltip||'';label.append(input);box.append(label);
+ };
+ const loader=roles.upscale_model.inputs.required.model_name;make('upscale_model',loader,S.refineRecipe.upscale_model_default);
+ for(const [name,spec] of Object.entries(roles.sampler.inputs.required||{})){if(!(name in defaults)||['seed','steps','cfg','sampler_name','scheduler'].includes(name))continue;make(name,spec,defaults[name])}
+}
+$('#ultimateUpscaleBtn').onclick=()=>openRunWizard('upscale');
+async function openRunWizard(mode){
+ try{
+ if(mode==='upscale'){
+ const envs=await refineEnvironments();if(!envs.length)throw new Error('Start a Comfy environment first.');
+ const env=envs.find(x=>x.id===S.refineRecipe?.environment_id)||envs[0];await inspectShelf(env.id);
+ S.refineRecipe=(await j('/api/upscale/recipe/'+enc(env.id))).recipe;
+ }else{await loadRefineRecipe()}
+ }catch(e){return alert(e.message)}
+ if(!S.refineRecipe?.roles)return openGraphWizard();const paths=S.selected.size?[...S.selected]:visibleFiles().map(x=>x.path);if(!paths.length)return alert('Select images, or leave selection empty to refine the shown set.');S.refineMode='run';refineSettingsReady=false;$('#refineWizardNext').disabled=true;$('#refineRunActions').hidden=false;$('#refineKeepSettings').checked=refineSettingsStore.enabled(refineSettingsSignature());$('#refineDestination').value='';$('#refineDestinationButton').textContent='Destination';$('#refineDestinationMenu').hidden=true;$('#refineDestinationButton').setAttribute('aria-expanded','false');S.refinePaths=paths;S.refineTranslations={};$('#refineWizardTitle').textContent=S.refineRecipe.name||'Refine SDXL';$('#refineGraphStage').hidden=true;$('#refineRunStage').hidden=false;$('#refineWizardNext').textContent='Send Jobs';$('#refineWizard').hidden=false;$('#refinePromptAdapter').hidden=true;
+ try{await inspectShelf(S.refineRecipe.environment_id);try{S.checkpointLibrary=await j('/api/comfy/checkpoint-library')}catch(_e){}const mr=await post('/api/refinement/metadata',{paths});S.refineMetadata=mr.items||[];const m=S.refineMetadata[0]?.metadata||{};const cp=(S.refineShelf.tools||[]).find(t=>t.type===S.refineRecipe.roles.checkpoint.type);const models=[...new Set([...schemaChoices(cp,'ckpt'),...schemaChoices(cp,'model')])];const modelMatch=historicalChoiceMatch(models,m.model),modelMissing=!!m.model&&!modelMatch;$('#refineModel').innerHTML=(modelMissing?`<option value="${esc(m.model)}" data-historical="1" selected>${esc(m.model)}</option>`:'')+models.map(x=>`<option ${x===modelMatch?'selected':''}>${esc(x)}</option>`).join('');setHistoricalState($('#refineModel'),modelMissing);$('#refinePositive').value=m.positive||'';$('#refineNegative').value=m.negative||'';$('#refineSeed').value=m.seed??0;$('#refineSourceSteps').value=Math.max(0,Number(m.steps??0));$('#refineSteps').value=10;$('#refineSteps').title=S.refineRecipe.kind==='ultimate_upscale'?'Diffusion steps for each tile.':'Additional steps beyond source generation history.';$('#refineCfg').value=m.cfg??8;const st=(S.refineShelf.tools||[]).find(t=>t.type===S.refineRecipe.roles.sampler.type);const samplers=schemaChoices(st,'sampler'),schedulers=schemaChoices(st,'scheduler');$('#refineSampler').innerHTML=samplers.map(x=>`<option ${m.sampler===x?'selected':''}>${esc(x)}</option>`).join('');$('#refineScheduler').innerHTML=schedulers.map(x=>`<option ${m.scheduler===x?'selected':''}>${esc(x)}</option>`).join('');$('#refineLoras').innerHTML='';(m.loras||[]).forEach(x=>addLoraRow(x.name,x.weight??1,x.weight??1));renderUpscaleControls();if(S.refineRecipe.kind==='ultimate_upscale'){const d=S.refineRecipe.defaults;$('#refineSteps').value=d.steps;$('#refineCfg').value=d.cfg;$('#refineSampler').value=d.sampler_name;$('#refineScheduler').value=d.scheduler}$('#refineStepsLabel').textContent=S.refineRecipe.kind==='ultimate_upscale'?'Steps per tile':'Refinement Steps';$('#refineSourceSteps').parentElement.hidden=S.refineRecipe.kind==='ultimate_upscale';restoreRefineSettings();refineSettingsReady=true;rememberRefineSettings();$('#refineWizardSub').textContent=`${paths.length} image${paths.length===1?'':'s'} · ${S.refineRecipe.name||'Refine SDXL'}${paths.length>1?' · one setup, per-image recovered prompts':''}`;updateRefineDialectUI()}catch(e){alert(e.message)}
 }
 $('#refineAddLora').onclick=()=>addLoraRow();$('#createRefinerGraphBtn').onclick=openWorkshop;$('#regenerateBtn').onclick=openRunWizard;$('#refineWizardClose').onclick=()=>$('#refineWizard').hidden=true;$('#refineWizard .jobPrepBackdrop').onclick=()=>$('#refineWizard').hidden=true;
 $('#refineWizardNext').onclick=async()=>{
@@ -1839,11 +1999,11 @@ $('#refineWizardNext').onclick=async()=>{
   const roles={};document.querySelectorAll('#refineRoles select[data-role]').forEach(x=>{const t=(S.refineShelf.tools||[]).find(q=>q.type===x.value);if(t)roles[x.dataset.role]={type:t.type,display_name:t.display_name,inputs:t.inputs,outputs:t.outputs,output_names:t.output_names}});if(Object.keys(roles).length!==refineRoles.length)return alert('Every graph role needs an installed tool.');
   const recipe={version:1,name:'Refine SDXL',environment_id:$('#refineEnvironment').value,roles,grammar:{fixed:['source','checkpoint','encode','text_positive','text_negative','sampler','decode','output'],repeatable:{lora:{min:0,max:null,between:'checkpoint→conditioning/model'}}}};try{const r=await j('/api/refinement/recipe',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipe})});S.refineRecipe=r.recipe;$('#refineWizard').hidden=true;loadRefineRecipe();$('#status').textContent='Refine SDXL graph saved. The button now points to this graph.'}catch(e){alert(e.message)};return
  }
- const unresolved=refineRunValidity();if(unresolved.length)return alert('Resolve missing checkpoint / LoRA dependencies before sending this graph to Comfy.');
+ if(!refineSettingsReady)return alert('Wait for image settings to load before sending jobs.');rememberRefineSettings();const unresolved=refineRunValidity();if(unresolved.length)return alert('Choose an output destination and resolve missing graph dependencies before sending jobs.');
  const needsTranslation=refineryNeedsTranslation();if(needsTranslation)return alert('Translate the incompatible prompt fields before Execute. Execute never launches the translator.');
  const loras=[...document.querySelectorAll('.refineLoraRow')].map(r=>({name:r.querySelector('.refineLoraName').value,model_strength:Number(r.querySelector('.refineLoraModel').value),clip_strength:Number(r.querySelector('.refineLoraClip').value)})).filter(x=>x.name);
- const run={environment_id:S.refineRecipe.environment_id,recipe:S.refineRecipe,paths:S.refinePaths,model:$('#refineModel').value,positive:$('#refinePositive').value,negative:$('#refineNegative').value,seed:Number($('#refineSeed').value||0),source_steps:Number($('#refineSourceSteps').value||0),refinement_steps:Number($('#refineSteps').value||10),cfg:Number($('#refineCfg').value||8),sampler:$('#refineSampler').value,scheduler:$('#refineScheduler').value,loras,destination:$('#refineDestination').value,prompt_mode:'per_image_metadata',translated_prompts:S.refineTranslations||{}};
- try{const r=await post('/api/refinement/dispatch',run);$('#refineWizard').hidden=true;$('#status').textContent=`Refinement ${r.id} queued · ${run.paths.length} image${run.paths.length===1?'':'s'} · one setup · per-image prompts · ${run.destination}`;refreshJobs();if(run.destination!=='comfy')watchComfyBatch(r.id)}catch(e){alert(e.message)}
+ const run={upscale_settings:upscaleRunSettings(),environment_id:S.refineRecipe.environment_id,recipe:S.refineRecipe,paths:S.refinePaths,model:$('#refineModel').value,positive:$('#refinePositive').value,negative:$('#refineNegative').value,seed:Number($('#refineSeed').value||0),source_steps:Number($('#refineSourceSteps').value||0),refinement_steps:Number($('#refineSteps').value||10),cfg:Number($('#refineCfg').value===''?8:$('#refineCfg').value),sampler:$('#refineSampler').value,scheduler:$('#refineScheduler').value,loras,destination:$('#refineDestination').value,prompt_mode:'per_image_metadata',translated_prompts:S.refineTranslations||{}};
+ try{const r=await post('/api/refinement/dispatch',run);$('#refineWizard').hidden=true;const label='Refinement '+r.id,details='one setup · per-image prompts · '+run.destination;$('#status').textContent=comfyBatchStatus(label,0,run.paths.length,details);refreshJobs();watchComfyBatch(r.id,label,details)}catch(e){alert(e.message)}
 };
 $('#refineTranslateBtn').onclick=pretranslateRefinery;for(const id of ['refinePositive','refineNegative']){const el=$('#'+id);if(el)el.addEventListener('input',()=>{S.refineTranslations={};updateRefineDialectUI()})}
 loadRefineRecipe();
@@ -1866,7 +2026,16 @@ const WORKSHOP_ROLE_HINTS={
 };
 S.workshop={step:0,template:null,engine:null,environment_id:null,target:null,roles:{},controls:{},name:''};S.workshopFunctions=[];
 function workshopTarget(){if(S.viewer?.path)return S.viewer.path;if(S.selected?.size)return [...S.selected][0];return visibleFiles()[0]?.path||null}
-function workshopToolCandidates(role){const tools=S.refineShelf?.tools||[],h=WORKSHOP_ROLE_HINTS[role]||[role.replaceAll('_',' ')];const scored=tools.map(t=>{const q=`${t.type} ${t.display_name||''} ${t.category||''}`.toLowerCase();let score=0;h.forEach((x,i)=>{if(q.includes(x))score+=20-i});return {t,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).map(x=>x.t);return scored.slice(0,30)}
+function workshopStillImageTool(tool){
+ // Shared MODEL/CLIP/VAE/LATENT/conditioning tools remain available. Exclude
+ // explicit temporal/audio tools, including ones that also emit IMAGE frames.
+ const name=`${tool.type} ${tool.display_name||''} ${tool.category||''}`.replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/[_-]/g,' ');
+ if(/\b(video|audio|animation|animated|movie|movies|webcam|vhs|svd|ltxv|wanvideo|cogvideo|hunyuanvideo)\b/i.test(name))return false;
+ const inputs=Object.values(tool.inputs||{}).flatMap(group=>group&&typeof group==='object'?Object.values(group):[]);
+ const types=[...(tool.outputs||[]),...inputs.map(spec=>Array.isArray(spec)?spec[0]:spec)].filter(x=>typeof x==='string');
+ return !types.some(type=>/(^|_)(AUDIO|VIDEO|VHS|ANIMATION|AV)(_|$)/i.test(type));
+}
+function workshopToolCandidates(role){const tools=S.refineShelf?.tools||[],h=WORKSHOP_ROLE_HINTS[role]||[role.replaceAll('_',' ')];return tools.filter(workshopStillImageTool).map(t=>{const q=`${t.type} ${t.display_name||''} ${t.category||''}`.toLowerCase();let score=0;h.forEach((x,i)=>{if(q.includes(x))score+=20-i});return {t,score}}).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).map(x=>x.t)}
 function workshopChoiceHtml(key,t){return `<button type="button" class="workshopChoice ${S.workshop.template===key?'selected':''}" data-template="${key}"><b>${esc(t.name)}</b><small>${esc(t.desc)}</small></button>`}
 async function openWorkshop(){
  const target=workshopTarget();S.workshop={step:0,template:null,engine:null,environment_id:null,target,roles:{},controls:{},name:''};$('#workshopTargetName').textContent=target||'No image pinned — template construction is still allowed';$('#workshopWizard').hidden=false;renderWorkshop()
@@ -1882,7 +2051,7 @@ $('#workshopBack').onclick=()=>{if(S.workshop.step>0){S.workshop.step--;renderWo
 $('#workshopNext').onclick=async()=>{const w=S.workshop;if(w.step===0&&!w.template)return alert('Thunderclese requires an intention. Choose what happens to the image.');if(w.step===1&&(!w.engine||!w.environment_id))return alert('Choose an engine and an online Comfy environment.');if(w.step===2){const t=WORKSHOP_TEMPLATES[w.template],required=t.roles.filter(x=>!x.endsWith('_optional'));const miss=required.filter(x=>!w.roles[x]);if(miss.length)return alert('Choose installed nodes for: '+miss.join(', '))}if(w.step<3){w.step++;return renderWorkshop()}const name=($('#workshopName').value||'Unnamed Spell').trim();document.querySelectorAll('[data-wcontrol]').forEach(x=>w.controls[x.dataset.wcontrol]=x.value);const fn={version:1,name,operation:w.template,engine:w.engine,environment_id:w.environment_id,roles:w.roles,controls:w.controls,grammar:{source:'Load_Image',sink:'Save_Image',ordered:WORKSHOP_TEMPLATES[w.template].roles},created_at:new Date().toISOString()};try{const r=await j('/api/workshop/functions',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({function:fn})});S.workshopFunctions=r.functions||[];renderWorkshopFunctions();$('#workshopWizard').hidden=true;$('#status').textContent=`Thunderclese bound ${name} to the Workshop.`}catch(e){alert(e.message)}};
 $('#workshopClose').onclick=()=>$('#workshopWizard').hidden=true;$('#workshopWizard .jobPrepBackdrop').onclick=()=>$('#workshopWizard').hidden=true;
 async function loadWorkshopFunctions(){if(!S.capabilities.processing)return;try{const r=await j('/api/workshop/functions');S.workshopFunctions=r.functions||[];renderWorkshopFunctions()}catch(e){}}
-function renderWorkshopFunctions(){const box=$('#workshopFunctions');if(!box)return;box.innerHTML=(S.workshopFunctions||[]).map(fn=>`<button type="button" data-workshop-fn="${esc(fn.id)}" title="${esc((WORKSHOP_TEMPLATES[fn.operation]?.name||fn.operation)+' · '+(fn.engine||''))}">${esc(fn.name)}</button>`).join('');box.querySelectorAll('[data-workshop-fn]').forEach(x=>{x.oncontextmenu=async e=>{e.preventDefault();const fn=S.workshopFunctions.find(q=>q.id===x.dataset.workshopFn);if(!fn)return;if(!confirm(`Delete refinement graph \"${fn.name}\"?\n\nThis removes the remembered graph and its button. It does not delete Comfy workflows, models, or images.`))return;try{const r=await j(`/api/workshop/functions/${enc(fn.id)}`,{method:'DELETE'});S.workshopFunctions=r.functions||[];renderWorkshopFunctions();$('#status').textContent=`Deleted graph · ${fn.name}`;}catch(err){alert(err.message)}};x.onclick=async()=>{const fn=S.workshopFunctions.find(q=>q.id===x.dataset.workshopFn);if(!fn)return;const paths=S.selected?.size?[...S.selected]:(workshopTarget()?[workshopTarget()]:[]);if(!paths.length)return alert('Choose or open an image first.');let lib={checkpoints:{}};try{lib=await j('/api/comfy/checkpoint-library')}catch(e){}const models=Object.keys(lib.checkpoints||{});if(!models.length)return alert('Checkpoint Library is empty. Run Interrogate Checkpoints in Settings first.');const meta=await post('/api/refinement/metadata',{paths:[paths[0]]});const recovered=meta.items?.[0]?.metadata||{};const guess=historicalChoiceMatch(models,recovered.model)||models[0];const model=prompt(`Run ${fn.name} on ${paths.length} image${paths.length===1?'':'s'}.\n\nTarget checkpoint:`,guess);if(model===null)return;if(!models.includes(model))return alert('Use an exact checkpoint name from the Checkpoint Library.');const positive=prompt('Prompt fallback (image metadata wins when present):',recovered.positive||'');if(positive===null)return;const negative=prompt('Negative prompt fallback:',recovered.negative||'');if(negative===null)return;const destination=prompt('Output: beside, replace, or comfy','beside');if(destination===null)return;if(!['beside','replace','comfy'].includes(destination))return alert('Output must be beside, replace, or comfy.');try{const r=await post('/api/workshop/dispatch',{function_id:fn.id,paths,model,positive,negative,destination});$('#status').textContent=`Workshop ${r.id} queued · ${fn.name} · ${paths.length} image${paths.length===1?'':'s'}`;refreshJobs();if(destination!=='comfy')watchComfyBatch(r.id)}catch(e){alert(e.message)}}})}
+function renderWorkshopFunctions(){const box=$('#workshopFunctions');if(!box)return;box.innerHTML=(S.workshopFunctions||[]).map(fn=>`<button type="button" data-workshop-fn="${esc(fn.id)}" title="${esc((WORKSHOP_TEMPLATES[fn.operation]?.name||fn.operation)+' · '+(fn.engine||''))}">${esc(fn.name)}</button>`).join('');box.querySelectorAll('[data-workshop-fn]').forEach(x=>{x.oncontextmenu=async e=>{e.preventDefault();const fn=S.workshopFunctions.find(q=>q.id===x.dataset.workshopFn);if(!fn)return;if(!confirm(`Delete refinement graph \"${fn.name}\"?\n\nThis removes the remembered graph and its button. It does not delete Comfy workflows, models, or images.`))return;try{const r=await j(`/api/workshop/functions/${enc(fn.id)}`,{method:'DELETE'});S.workshopFunctions=r.functions||[];renderWorkshopFunctions();$('#status').textContent=`Deleted graph · ${fn.name}`;}catch(err){alert(err.message)}};x.onclick=async()=>{const fn=S.workshopFunctions.find(q=>q.id===x.dataset.workshopFn);if(!fn)return;const paths=S.selected?.size?[...S.selected]:(workshopTarget()?[workshopTarget()]:[]);if(!paths.length)return alert('Choose or open an image first.');let lib={checkpoints:{}};try{lib=await j('/api/comfy/checkpoint-library')}catch(e){}const models=Object.keys(lib.checkpoints||{});if(!models.length)return alert('Checkpoint Library is empty. Run Interrogate Checkpoints in Settings first.');const meta=await post('/api/refinement/metadata',{paths:[paths[0]]});const recovered=meta.items?.[0]?.metadata||{};const guess=historicalChoiceMatch(models,recovered.model)||models[0];const model=prompt(`Run ${fn.name} on ${paths.length} image${paths.length===1?'':'s'}.\n\nTarget checkpoint:`,guess);if(model===null)return;if(!models.includes(model))return alert('Use an exact checkpoint name from the Checkpoint Library.');const positive=prompt('Prompt fallback (image metadata wins when present):',recovered.positive||'');if(positive===null)return;const negative=prompt('Negative prompt fallback:',recovered.negative||'');if(negative===null)return;const destination=prompt('Output: beside, replace, or comfy','beside');if(destination===null)return;if(!['beside','replace','comfy'].includes(destination))return alert('Output must be beside, replace, or comfy.');try{const r=await post('/api/workshop/dispatch',{function_id:fn.id,paths,model,positive,negative,destination});const label='Workshop '+r.id+' · '+fn.name;$('#status').textContent=comfyBatchStatus(label,0,paths.length,destination);refreshJobs();watchComfyBatch(r.id,label,destination)}catch(e){alert(e.message)}}})}
 loadWorkshopFunctions();
 
 // I.2e: same controls, drawer presentation at narrow viewports.
@@ -1989,3 +2158,6 @@ if(!S.mobile){
   if(S.scopeRoot)await load(S.scopeRoot,true,'ignore-rules');
  }catch(error){status.textContent=error.message}finally{button.disabled=false}};
 })();
+
+$('#refineDestinationButton').onclick=()=>{const menu=$('#refineDestinationMenu');menu.hidden=!menu.hidden;$('#refineDestinationButton').setAttribute('aria-expanded',String(!menu.hidden))};
+$('#refineDestinationMenu').onclick=event=>{const choice=event.target.closest('button[data-destination]');if(!choice)return;$('#refineDestination').value=choice.dataset.destination;$('#refineDestinationButton').textContent=choice.textContent;$('#refineDestinationMenu').hidden=true;$('#refineDestinationButton').setAttribute('aria-expanded','false');refineRunValidity()};

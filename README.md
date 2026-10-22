@@ -13,7 +13,7 @@ Comes with a built-in remote-access portal. LAN/Wi-Fi only requires scanning an 
 (or typing in the link below it) for instant pairing. http remote connection requires you have an
 address of your own, but I just learned they're stupid cheap, so skip one baconator and buy a domain.
 
-**Official alpha: I.2t-l-Z2b.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z2b).
+**Official alpha: I.2t-l-Z2v.** [Download the complete package](https://github.com/Kokunekosan/N8Vision/releases/tag/vI.2t-l-Z2v).
 No patch stacking is needed. Bug reports are welcome in [Issues](https://github.com/Kokunekosan/N8Vision/issues).
 
 ## Install and launch
@@ -61,6 +61,26 @@ collapsible menu sections, and mobile Back dismissing the active panel.
 Desktop window size is configured in Settings / Library, in steps of 1,000.
 Cross-window inclusive selection is supported for unfiltered Filesystem order;
 an unavailable anchor in other views is reported rather than guessed.
+
+## Latest update - October 22, 2026
+
+- Ultimate SD Upscale now has a dedicated action with editable scale, denoise,
+  tiling and seam controls, an expandable LoRA chain and the connected checkpoint VAE.
+- Refine and Upscale keep settings independently, including their opt-in checkbox.
+  Destination is a compact chooser: select Replace, Beside or Output before sending.
+- Workshop node pickers no longer stop at 30 matches. Clearly video/audio-specific
+  tools are excluded; shared image-processing tools remain available.
+- Comfy recovery timeout follows batch inactivity, with each returned result
+  extending the window. Batch status shows the number complete.
+- New and regenerated same-name outputs clear stale placeholders. Automatic grid
+  refresh prepares visible cards first and retries deferred batch refreshes.
+- The move picker reuses the folder architecture already discovered by the library.
+- Diagnostic badges refresh on changed assets. Idle Vision models are released
+  after two minutes; Comfy handoff also releases idle models.
+- Atomic active-job journals preserve more useful interruption diagnostics.
+
+An isolated report of Beside removing its original remains unconfirmed. See
+[known issues and reporting details](KNOWN-ISSUES.md) if it happens again.
 
 ## Nightly fixes — October 18, 2026
 

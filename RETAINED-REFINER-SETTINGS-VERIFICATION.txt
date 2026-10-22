@@ -1,0 +1,12 @@
+Z2p: Keep these settings checkbox retains checkpoint, LoRAs including strengths,
+refinement steps, CFG, sampler and scheduler in this browser. Settings are scoped
+to Comfy environment and workflow role types; disabled uses source defaults.
+Prompts, source steps, seed, selection and destination are not retained.
+Destination moved full-width immediately above Send Jobs, resets Beside per opening.
+Unavailable saved tools are marked and blocked by launch validation.
+Tests: JS/Python syntax; storage opt-in, reload, disabled, workflow isolation,
+copy isolation, zero values and malformed JSON; field boundaries and HTML order.
+No running-app visual test performed. Includes all fixes since published Z2b.
+Incremental reconstruction, ZIP CRC, exact entry bytes and hashes verified.
+Stop Vision after jobs finish, extract patch over Z2b or later, restart and refresh.
+Live installation and GitHub unchanged.

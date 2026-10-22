@@ -1,0 +1,12 @@
+Z2c: Comfy recovery timeout is batch inactivity, not prompt age.
+Replace fixed1800poll loop with monotonic elapsed idle check. Each successful
+return records batch last_recovery_monotonic, extending every still-pending
+watcher's deadline to30minutes after last return (or own registration). Failed
+recoveries do not extend. Timeout checks pending identity and batch progress
+under shared recovery lock before marking terminal. No frontend regrid changes.
+Tests extracted actual watcher/finish with fakeclock: returns at1700/3400secs,
+watcher survives olddeadline then expires at5200; no-progress expires1800.
+Python syntax and incremental ZIP/CRC/entry bytes/hash verified. Live running
+batch untouched. Patch requires restart after batch finishes, cannot revive
+watchers already expired in oldprocess. Preserve orphaned Comfy outputs for
+separate recovery. Apply overZ2b. GitHub unchanged.

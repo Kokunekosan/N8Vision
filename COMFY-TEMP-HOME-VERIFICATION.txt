@@ -1,0 +1,13 @@
+Z2j: restore visible temp_home before Comfy end-batch regrid first paint.
+Three faults found: home derived from first mounted hidden buffer row, captured
+before asynchronous metadata request, and restored in RAF after initial render.
+Use current cursor row's first real survivor, skipping tombstone/forward records;
+read cached displayed sequence. Capture after response and stale root/files/view
+checks, immediately before catalog merge. Render accepts anchor, lays out rows,
+pins cursor and resets obsolete ring coordinate before first paint. ManualRedraw
+uses same prepaint anchor path. Single endbatch refresh remains, no extra reload.
+Tests actual home helper hiddenbuffer/visible/forward, actual render pinbefore
+paint, actual async refresh captures current scroll after networkresponse; JS/
+Python syntax. Live Comfy/browser positional test pending. Apply overZ2i after
+jobs finish, restart/refresh. ZIP reconstruction/CRC/hash verified.
+Live/GitHub unchanged; public Beside bug guidance remains pending publication.

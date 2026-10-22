@@ -1,0 +1,22 @@
+{
+  "upscale_by": 2,
+  "seed": 665718783618327,
+  "steps": 20,
+  "cfg": 4,
+  "sampler_name": "euler_ancestral",
+  "scheduler": "simple",
+  "denoise": 0.25,
+  "mode_type": "Linear",
+  "tile_width": 512,
+  "tile_height": 512,
+  "mask_blur": 8,
+  "tile_padding": 32,
+  "seam_fix_mode": "Half Tile + Intersections",
+  "seam_fix_denoise": 1,
+  "seam_fix_width": 64,
+  "seam_fix_mask_blur": 8,
+  "seam_fix_padding": 16,
+  "force_uniform_tiles": true,
+  "tiled_decode": false,
+  "batch_size": 1
+}

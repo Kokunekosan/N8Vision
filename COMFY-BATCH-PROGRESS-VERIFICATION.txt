@@ -1,0 +1,12 @@
+Z2h: bottom status ## Complete after Comfy operation name.
+Initial0 Complete, updates successful returns on existing1second batch polling.
+Queued total remains separate, no completed/total fraction; failures separate.
+Don't overwrite unrelated footer actions. After single end-of-batch regrid retain
+completion summary. Refinement and Workshop supported. Leave-in-Comfy now creates
+batch watchers too, counting verified outputs without relocating or regridding.
+Finish callback idempotent per pending job prevents duplicate success counting.
+Tests actual polling status1/2 Complete, queued53, failure separate, no fraction,
+output-only no regrid; backend finish success/failure/duplicate/complete; syntax.
+Live UI/Comfy output-only test pending. Apply overZ2g after activejobs finish,
+restart and refresh. Existing alreadyqueued batches not retrofitted.
+ZIP reconstruction/CRC/entry bytes/hash verified. Live/GitHub unchanged.

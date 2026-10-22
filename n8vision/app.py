@@ -40,7 +40,7 @@ async def edition_capabilities(request:Request,call_next):
  return await call_next(request)
 
 @app.get('/api/edition')
-def edition_info():return {**EDITION,'version':'I.2t-l-Z2b','subject_intelligence_available':EDITION['subject_intelligence']}
+def edition_info():return {**EDITION,'version':'I.2t-l-Z2v','subject_intelligence_available':EDITION['subject_intelligence']}
 
 LOCAL_ATTENTION=0
 @app.get('/api/instance')
@@ -54,7 +54,10 @@ def instance_attention(request:Request):
  if request.method=='POST':LOCAL_ATTENTION+=1
  return {'sequence':LOCAL_ATTENTION}
 
-JOBS:dict[str,dict[str,Any]]={}; LOCK=threading.Lock(); MODEL_CACHE={}
+from .model_residency import ModelCache,release_models,start_reaper
+JOBS:dict[str,dict[str,Any]]={}; LOCK=threading.Lock(); MODEL_CACHE=ModelCache('Vision')
+@app.on_event('startup')
+def start_idle_model_release():start_reaper()
 OUTPUT_RECOVERY_LOCK=threading.RLock()
 PENDING_COMFY_OUTPUTS:dict[str,dict[str,Any]]={}
 COMFY_RECOVERY_BATCHES:dict[str,dict[str,Any]]={}
@@ -488,37 +491,34 @@ def revoke_device(req:RevokeDeviceRequest):
  for x in gone:hashes.discard(x.get('credential_hash'))
  cfg['persistent_credential_hashes']=list(hashes);_save_config(cfg);return {'ok':True,'revoked':len(gone)}
 
-def _write_active_job_journal():
- # Persist only work that would be unsafe to pretend survived a process exit.
- # The journal is diagnostic/recovery metadata, never a resume queue.
- with LOCK:
-  active=[dict(j) for j in JOBS.values() if j.get('state') in ('queued','running')]
- tmp=JOB_JOURNAL_PATH.with_suffix('.tmp')
- try:
-  if active:
-   tmp.write_text(json.dumps({'session_id':NETWORK_SESSION_ID,'updated':time.time(),'jobs':active},indent=2),encoding='utf-8')
-   tmp.replace(JOB_JOURNAL_PATH)
-  else:
-   tmp.unlink(missing_ok=True); JOB_JOURNAL_PATH.unlink(missing_ok=True)
- except Exception as e:
-  LOG.warning('Could not update active-job journal: %s',e)
+from . import job_journal
+JOB_JOURNAL_IO_LOCK=threading.RLock()
+JOB_JOURNAL_LAST_WRITE=0.0
+def _write_active_job_journal(force=True):
+ global JOB_JOURNAL_LAST_WRITE
+ with JOB_JOURNAL_IO_LOCK:
+  if not force and time.monotonic()-JOB_JOURNAL_LAST_WRITE<2:return
+  with LOCK:active=[job_journal.summarize(j) for j in JOBS.values() if j.get('state') in ('queued','running','recovering')]
+  try:
+   job_journal.write(JOB_JOURNAL_PATH,{'session_id':NETWORK_SESSION_ID,'updated':time.time(),'jobs':active})
+   JOB_JOURNAL_LAST_WRITE=time.monotonic()
+  except Exception as error:LOG.warning('Could not update active-job journal: %s',error)
 
 def _purge_stale_job_journal():
  global STALE_JOB_REPORT
- if not JOB_JOURNAL_PATH.exists(): return
  try:
-  d=json.loads(JOB_JOURNAL_PATH.read_text(encoding='utf-8'))
-  jobs=[j for j in d.get('jobs',[]) if isinstance(j,dict) and j.get('state') in ('queued','running')]
-  STALE_JOB_REPORT={'count':len(jobs),'jobs':[{'id':j.get('id'),'kind':j.get('kind','unknown'),'state':j.get('state','unknown'),'done':j.get('done',0),'total':j.get('total',0)} for j in jobs]}
-  if jobs:
-   LOG.error('Previous session ended with %s unfinished job(s); they cannot be resumed and were purged.',len(jobs))
-   for j in jobs: LOG.error('Abandoned job: %s %s — %s/%s complete',j.get('kind','unknown'),j.get('id','?'),j.get('done',0),j.get('total',0))
- except Exception as e:
-  STALE_JOB_REPORT={'count':1,'jobs':[{'kind':'job-journal','state':'invalid','error':str(e)}]}
-  LOG.error('Previous active-job journal was unreadable and was purged: %s',e)
+  document,backup,errors=job_journal.recover(JOB_JOURNAL_PATH)
+  if document is not None:
+   jobs=[j for j in document['jobs'] if j.get('state') in ('queued','running','recovering')]
+   STALE_JOB_REPORT={'count':len(jobs),'jobs':jobs,'updated':document.get('updated'),'from_backup':backup}
+   if jobs:
+    LOG.error('Previous session: %s unfinished jobs discarded%s',len(jobs),' (backup journal)' if backup else '')
+    for job in jobs:LOG.error('Interrupted job: %s · phase %s · %s/%s · model %s · last image %s',job.get('kind'),job.get('phase',job.get('state')),job.get('done',0),job.get('total',0),job.get('current_model','unknown'),job.get('last_image','unknown'))
+  elif errors:
+   STALE_JOB_REPORT={'count':1,'jobs':[{'kind':'job-journal','state':'invalid','error':'Journal and backup unavailable: '+ '; '.join(errors)}]}
+   LOG.error('Previous job details unavailable: %s',errors)
  finally:
-  JOB_JOURNAL_PATH.unlink(missing_ok=True)
-  JOB_JOURNAL_PATH.with_suffix('.tmp').unlink(missing_ok=True)
+  for path in [JOB_JOURNAL_PATH,JOB_JOURNAL_PATH.with_suffix(JOB_JOURNAL_PATH.suffix+'.bak'),JOB_JOURNAL_PATH.with_suffix('.tmp')]:path.unlink(missing_ok=True)
 
 _purge_stale_job_journal()
 
@@ -2680,6 +2680,7 @@ def _yuan_batch_features(ex,paths,stage):
   rows.append({'image_path':str(pp),'brisque_raw':float(br),'aesthetic_raw':float(ae),'brisque_normalized':ex.brisque_model.normalize_score(float(br)),'aesthetic_normalized':ex.laion_model.normalize_score(float(ae)),'clip_embedding':emb.numpy()})
  return rows
 
+@MODEL_CACHE.use
 def quality_paths(paths,model_name='openai/clip-vit-base-patch32',progress=None,batch_size=16):
  """Yuan quality fusion with persistent accelerator tuning and independent work units."""
  import numpy as np
@@ -2768,6 +2769,7 @@ def quality_paths(paths,model_name='openai/clip-vit-base-patch32',progress=None,
    pool.shutdown(wait=True);extractor._n8_brisque_pool=None
  return {'processed':done,'results':results,'provider':'yuan-iqf-v2','batch_size':best_batch if not learned else learned,'device':device,'model_device':clip_device,'model_dtype':clip_dtype,'yuan_devices':yuan_devices,'target_pps':round(best_rate or float(receipt.get('target_pps',0) or 0),3),'brisque_workers':getattr(extractor,'_n8_brisque_workers',1),'stage_seconds':{k:round(v,3) for k,v in stage.items()}}
 
+@MODEL_CACHE.use
 def classify_paths(paths,labels,model_name,progress=None,batch_size=32,triage=False):
  import numpy as np
  torch,m,proc,device=clip_parts(model_name)
@@ -2845,6 +2847,7 @@ def classify(req:ClassifyRequest):
  try:return {'status':'ok',**classify_paths(req.paths,labels,req.model)}
  except Exception as e:raise HTTPException(500,f'Classification failed: {e}')
 
+@MODEL_CACHE.use
 def embed_paths(paths,model_name,progress=None,batch_size=64):
  """Batched CLIP embeddings with explicit CUDA routing and stage telemetry."""
  import numpy as np
@@ -2896,6 +2899,7 @@ def embed(req:EmbedRequest):
  try:return embed_paths(req.paths,req.model)
  except Exception as e:raise HTTPException(500,f'Embedding failed: {e}')
 
+@MODEL_CACHE.use
 def detect_paths(paths,model_name,conf,progress=None):
  from ultralytics import YOLO
  key=('yolo',model_name);model=MODEL_CACHE.get(key) or YOLO(model_name);MODEL_CACHE[key]=model;done=0
@@ -2921,6 +2925,7 @@ def detect(req:DetectRequest):
 
 SAM_INFERENCE_LOCK=threading.RLock()
 
+@MODEL_CACHE.use
 def _sam_box_geometry(path,bbox):
  """The single SAM implementation used by Mask Studio and global SAM Boxes.
 
@@ -3027,6 +3032,7 @@ def segment(req:SegmentRequest):
  except Exception as e:raise HTTPException(500,f'Segmentation failed: {e}')
 
 @app.post('/api/search/semantic')
+@MODEL_CACHE.use
 def semantic(req:SemanticRequest):
  try:
   import numpy as np
@@ -3457,6 +3463,7 @@ class GuidedSubjectRequest(SubjectObservationRef):
  hints:list[list[float]]
  max_passes:int=Field(default=17,ge=0,le=100)
 
+@MODEL_CACHE.use
 def guided_subject_job(payload,progress=None):
  from .subject_guided import build
  import numpy as np
@@ -4693,6 +4700,7 @@ def _stage_workflow_in_comfy(env,workflow_path:Path):
  prompt={'1':{'class_type':'N8VisionLoadWorkflow','inputs':{'workflow_path':str(workflow_path)}}}
  body=json.dumps({'prompt':prompt,'client_id':'n8vision-'+uuid.uuid4().hex[:8]}).encode('utf-8')
  try:
+  release_models(force=True)
   req=urllib.request.Request(base+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
   with urllib.request.urlopen(req,timeout=2.0) as r: reply=json.loads(r.read().decode('utf-8') or '{}')
   return {'staged':True,'prompt_id':reply.get('prompt_id')}
@@ -4873,6 +4881,7 @@ def _translate_via_comfy(env:dict,text:str,target:str,stream_key:str,timeout:flo
  with COMFY_TEXT_LOCK:COMFY_TEXT_STREAMS[request_id]={'request_id':request_id,'stream_key':stream_key,'source_dialect':source,'target_dialect':target,'text':'','status':'waiting','updated':time.time()}
  prompt=_translator_prompt(cfg,text,source,target,request_id);base=env['api_url'].rstrip('/')
  import urllib.request,urllib.error
+ release_models(force=True)
  body=json.dumps({'prompt':prompt,'client_id':'n8vision-text'}).encode();rq=urllib.request.Request(base+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
  try:
   with urllib.request.urlopen(rq,timeout=15) as r:ans=json.loads(r.read().decode())
@@ -5347,6 +5356,7 @@ def _comfy_batch(paths,env,workflow,regions=None,positive='',negative='',progres
   # Keep the exact last payload for diagnosis without making the normal log enormous.
   debug_dir=DATA/'debug';debug_dir.mkdir(parents=True,exist_ok=True);debug_file=debug_dir/'last_comfy_submission.json'
   debug_file.write_text(json.dumps({'prompt':prompt},indent=2,ensure_ascii=False),encoding='utf-8')
+  release_models(force=True)
   body=json.dumps({'prompt':prompt}).encode('utf-8');rq=urllib.request.Request(base+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
   try:
    with urllib.request.urlopen(rq,timeout=15) as resp:submitted=json.loads(resp.read().decode('utf-8','replace'))
@@ -5381,7 +5391,7 @@ def environment_dispatch(req:ExternalDispatchRequest):
 
 # --- P.56 deterministic single-stage refinement recipe executor ---
 class RefinementDispatchRequest(BaseModel):
- environment_id:str; recipe:dict[str,Any]; paths:list[str]; model:str=''; positive:str=''; negative:str=''; seed:int=0; source_steps:int=0; refinement_steps:int=10; cfg:float=8.0; sampler:str=''; scheduler:str=''; loras:list[dict[str,Any]]=[]; destination:str='comfy'; prompt_mode:str='per_image_metadata'; translated_prompts:dict[str,dict[str,str]]={}
+ environment_id:str; recipe:dict[str,Any]; paths:list[str]; model:str=''; positive:str=''; negative:str=''; seed:int=0; source_steps:int=0; refinement_steps:int=10; cfg:float=8.0; sampler:str=''; scheduler:str=''; loras:list[dict[str,Any]]=[]; destination:str='comfy'; prompt_mode:str='per_image_metadata'; translated_prompts:dict[str,dict[str,str]]={}; upscale_settings:dict[str,Any]={}
 
 def _recipe_inputs(role):
  d=role.get('inputs',{}) if isinstance(role,dict) else {};return {**(d.get('required',{}) or {}),**(d.get('optional',{}) or {})}
@@ -5413,6 +5423,9 @@ def _set_widget(inp,role,value,names):
  return None
 
 def _refinement_prompt(recipe,source_name,req,output_prefix='N8Vision/Refinement'):
+ if recipe.get('kind')=='ultimate_upscale':
+  from .ultimate_upscale import compile_prompt
+  return compile_prompt(recipe,source_name,req,output_prefix,_default_inputs)
  roles=recipe.get('roles',{});needed=('source','checkpoint','lora','encode','text','sampler','decode','output')
  if any(k not in roles for k in needed):raise RuntimeError('Refinement recipe is incomplete. Create a new graph.')
  prompt={};seq=0
@@ -5457,7 +5470,7 @@ def _refinement_batch(reqdict,progress=None):
  import urllib.request,urllib.error,shutil
  req=RefinementDispatchRequest(**reqdict);env=_find_comfy_env(req.environment_id);root=norm(env.get('root') or '.');input_dir=root/'input';input_dir.mkdir(parents=True,exist_ok=True);base=env['api_url'].rstrip('/');submitted=[]
  batch_id=str(reqdict.get('_n8_batch_id') or uuid.uuid4().hex[:12]);batch_sources=[str(norm(x)) for x in req.paths if image_file(norm(x))]
- if req.destination in {'beside','replace'}:
+ if req.destination in {'beside','replace','comfy'}:
   with OUTPUT_RECOVERY_LOCK:COMFY_RECOVERY_BATCHES[batch_id]={'id':batch_id,'kind':'refinement','total':len(batch_sources),'terminal':0,'recovered':0,'failed':0,'sources':batch_sources,'targets':[],'complete':False,'updated':time.time()}
  total=max(1,len(req.paths))
  for i,raw in enumerate(req.paths):
@@ -5506,13 +5519,14 @@ def _refinement_batch(reqdict,progress=None):
   job_token=uuid.uuid4().hex
   output_prefix=f"N8Vision/{src.stem}_{_method_slug(req.recipe.get('name') or 'Refine')}_{job_token}"
   prompt=_refinement_prompt(req.recipe,str(rel).replace('\\','/'),item_req,output_prefix)
+  release_models(force=True)
   body=json.dumps({'prompt':prompt,'client_id':'n8vision-refinement'}).encode();request=urllib.request.Request(base+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
   try:
    with urllib.request.urlopen(request,timeout=15) as r:ans=json.loads(r.read().decode())
   except urllib.error.HTTPError as e:raise RuntimeError(f"Comfy rejected refinement for {src.name}: HTTP {e.code}\n{e.read().decode(errors='replace')}") from e
   pid=ans.get('prompt_id')
   submitted.append({'source':str(src),'prompt_id':pid,'destination':req.destination,'staged':str(dest),'prompt_source':'image metadata' if req.prompt_mode=='per_image_metadata' and (item_req.positive!=req.positive or item_req.negative!=req.negative) else 'wizard fallback'})
-  if pid and req.destination in {'beside','replace'}:
+  if pid and req.destination in {'beside','replace','comfy'}:
    _arm_comfy_output_recovery(pid,{'source':str(src),'destination':req.destination,'method':str(req.recipe.get('name') or 'Refine'),'environment_id':req.environment_id,'output_prefix':output_prefix,'job_token':job_token,'iteration':0,'batch_id':batch_id})
   if progress:progress(i+1,total)
  return {'submitted':submitted,'destination':req.destination,'batch_mode':'sequential','prompt_mode':req.prompt_mode,'note':'Queued sequentially in Comfy from one setup. Each generated image uses its own recovered CLIP text when present; metadata-less images use the wizard prompt. Beside/Replace outputs are recovered when the Comfy bridge reports output ready.'}
@@ -5552,6 +5566,10 @@ def _invalidate_replacement_analysis(pending,target):
  LOG.info('Replaced image: old pixel analysis invalidated · %s · %s',target,counts)
 
 def _recover_comfy_asset(pending,env,outputs):
+ with OUTPUT_RECOVERY_LOCK:guard=pending.setdefault('_recovery_lock',threading.RLock())
+ with guard:return _recover_comfy_asset_locked(pending,env,outputs)
+
+def _recover_comfy_asset_locked(pending,env,outputs):
  if pending.get('_recovered_target'):
   target=Path(pending['_recovered_target'])
   if pending.get('destination')=='replace':_invalidate_replacement_analysis(pending,target)
@@ -5560,17 +5578,15 @@ def _recover_comfy_asset(pending,env,outputs):
  if fresh is None:raise RuntimeError(f"Comfy reported output ready, but did not report the asset assigned to this job ({pending.get('output_prefix')}).")
  if not src.parent.exists():raise RuntimeError(f'Source folder disappeared before output recovery: {src.parent}')
  mode=pending.get('destination')
+ if mode not in {'replace','beside'}:raise RuntimeError('Unsupported recovery destination')
+ if src.resolve()==fresh.resolve() or (src.exists() and os.path.samefile(src,fresh)):raise RuntimeError('Recovery output aliases original source; refusing file action')
  if mode=='replace':
   if src.exists():send2trash(str(src))
-  target=src
+  target=src;shutil.move(str(fresh),str(target))
  else:
-  method=_method_slug(pending.get('method'));base=f'{src.stem}_{method}';ext=fresh.suffix or src.suffix
-  target=src.parent/f'{base}{ext}';iteration=1
-  while target.exists():
-   iteration+=1;target=src.parent/f'{base}_{iteration}{ext}'
-  pending['iteration']=iteration
- # shutil.move is deliberate: recovered Comfy assets leave the output staging tree.
- shutil.move(str(fresh),str(target))
+  from .beside_recovery import save_beside
+  target,pending['iteration']=save_beside(fresh,src,_method_slug(pending.get('method')))
+ LOG.info('Comfy recovery mode=%s · donor=%s · output=%s',mode,src,target)
  pending['_recovered_target']=str(target)
  if mode=='replace':_invalidate_replacement_analysis(pending,target)
  return target
@@ -5586,23 +5602,37 @@ def _history_output_rows(doc,prompt_id):
      rows.append({'filename':item.get('filename'),'subfolder':item.get('subfolder') or '','type':item.get('type') or 'output'})
  return rows
 
+def _notice_recovered_output(target):
+ try:
+  target=Path(target)
+  if not image_file(target):return
+  with NOTICERS_LOCK:watchers=list(NOTICERS.values())
+  for watcher in watchers:
+   if watcher.record_file(target):_noticer_register(watcher)
+ except Exception:LOG.exception('Recovered output intake deferred: %s',target)
+
 def _finish_comfy_recovery(pending,ok,target=None,error=None):
+ if ok and target:_notice_recovered_output(target)
  batch_id=str(pending.get('batch_id') or '')
  if not batch_id:return
  with OUTPUT_RECOVERY_LOCK:
   b=COMFY_RECOVERY_BATCHES.get(batch_id)
-  if not b:return
+  if not b or pending.get('_recovery_finished'):return
+  pending['_recovery_finished']=True
   b['terminal']=int(b.get('terminal',0))+1
   if ok:
+   b['last_recovery_monotonic']=time.monotonic()
    b['recovered']=int(b.get('recovered',0))+1
-   if target:b.setdefault('targets',[]).append(str(target))
+   if target:
+    b.setdefault('targets',[]).append(str(target))
+    b.setdefault('outputs',[]).append({'source':str(pending.get('source') or ''),'target':str(target),'destination':pending.get('destination')})
   else:
    b['failed']=int(b.get('failed',0))+1
    if error:b.setdefault('errors',[]).append(str(error))
   b['updated']=time.time();b['complete']=b['terminal']>=b['total']
   job=JOBS.get(batch_id)
   if job:
-   job.update(done=int(b['terminal']),total=int(b['total']),phase='recovering',updated=time.time())
+   job.update(done=int(b['terminal']),total=int(b['total']),phase='recovering',updated=time.time(),last_image=str(pending.get('source') or target or ''),recovery_progress={key:b.get(key,0) for key in ('recovered','failed','total')})
    if b['complete']:
     job.update(state='done',phase='complete',result={**(job.get('result') or {}),'recovery':dict(b)})
    elif job.get('state') not in {'error','stopped'}:job['state']='recovering'
@@ -5621,12 +5651,20 @@ def comfy_recovery_batch(batch_id:str):
   return dict(b)
 
 class ViewRefreshRequest(BaseModel):
- roots:list[str]=[];recursive:bool=False
+ roots:list[str]=[];recursive:bool=False;paths:list[str]=[]
 
 @app.post('/api/view-refresh')
 def view_refresh(req:ViewRefreshRequest):
  records=[];seen=set()
- for raw in req.roots:
+ if req.paths:
+  if len(req.paths)>20000:raise HTTPException(400,'Too many paths')
+  for raw in dict.fromkeys(req.paths):
+   x=norm(raw)
+   if not image_file(x):continue
+   try:st=x.stat()
+   except OSError:continue
+   records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime})
+ for raw in ([] if req.paths else req.roots):
   p=norm(raw)
   if not p.exists() or not p.is_dir():continue
   try:it=p.rglob('*') if req.recursive else p.iterdir()
@@ -5650,7 +5688,7 @@ def _watch_comfy_output(prompt_id):
  pid=str(prompt_id or '')
  if not pid:return
  # Long enough for real refinement/upscale jobs; cheap polling against local Comfy history.
- for _ in range(1800):
+ while True:
   with OUTPUT_RECOVERY_LOCK:pending=PENDING_COMFY_OUTPUTS.get(pid)
   if not pending:return
   try:
@@ -5659,23 +5697,36 @@ def _watch_comfy_output(prompt_id):
     with urllib.request.urlopen(base+'/history/'+urllib.parse.quote(pid,safe=''),timeout=3.0) as r:doc=json.loads(r.read().decode('utf-8','replace') or '{}')
     outputs=_history_output_rows(doc,pid)
     if outputs:
-     target=_recover_comfy_asset(pending,env,outputs)
+     if pending.get('destination')=='comfy':
+      target=_reported_comfy_output(env,outputs,pending.get('output_prefix',''))
+      if target is None:raise RuntimeError('Comfy output not yet visible')
+     else:target=_recover_comfy_asset(pending,env,outputs)
      with OUTPUT_RECOVERY_LOCK:PENDING_COMFY_OUTPUTS.pop(pid,None)
      LOG.info('Comfy refinement complete; output recovered server-side: %s -> %s',pid,target)
      _finish_comfy_recovery(pending,True,target=target)
      return
   except Exception as e:
-   # History is empty while a prompt is running. Real recovery errors are retried because filesystem visibility can lag history.
-   pass
+   message=f'{type(e).__name__}: {e}'
+   now=time.monotonic()
+   if message!=pending.get('_last_recovery_error') or now-pending.get('_last_recovery_warning',0)>=60:
+    LOG.warning('Comfy recovery retry · prompt %s · mode %s · %s',pid,pending.get('destination'),message)
+    pending['_last_recovery_error']=message;pending['_last_recovery_warning']=now
+  with OUTPUT_RECOVERY_LOCK:
+   if PENDING_COMFY_OUTPUTS.get(pid) is not pending:return
+   batch=COMFY_RECOVERY_BATCHES.get(str(pending.get('batch_id') or ''),{})
+   last=max(pending.get('_recovery_started',time.monotonic()),batch.get('last_recovery_monotonic',0))
+   if time.monotonic()-last>=1800:
+    PENDING_COMFY_OUTPUTS.pop(pid,None)
+    _finish_comfy_recovery(pending,False,error='No successful batch recovery for 30 minutes')
+    LOG.warning('Comfy output recovery idle timeout (30 minutes without a return) for prompt %s',pid)
+    return
   time.sleep(1.0)
- with OUTPUT_RECOVERY_LOCK:PENDING_COMFY_OUTPUTS.pop(pid,None)
- _finish_comfy_recovery(pending,False,error='output recovery timed out')
- LOG.warning('Comfy output recovery watcher timed out for prompt %s',pid)
 
 def _arm_comfy_output_recovery(prompt_id,pending):
  pid=str(prompt_id or '')
  if not pid:return
- with OUTPUT_RECOVERY_LOCK:PENDING_COMFY_OUTPUTS[pid]=pending
+ with OUTPUT_RECOVERY_LOCK:
+  pending['_recovery_started']=time.monotonic();PENDING_COMFY_OUTPUTS[pid]=pending
  threading.Thread(target=_watch_comfy_output,args=(pid,),name=f'n8vision-output-{pid[:8]}',daemon=True).start()
 
 @app.post('/api/comfy/output-ready')
@@ -5685,7 +5736,9 @@ def comfy_output_ready(req:ComfyOutputReadyRequest):
  with OUTPUT_RECOVERY_LOCK:pending=PENDING_COMFY_OUTPUTS.pop(pid,None)
  if not pending:return {'ok':True,'ignored':'prompt not owned by an N8Vision recovery job'}
  try:
-  env=_find_comfy_env(pending.get('environment_id') or req.environment_id);target=_recover_comfy_asset(pending,env,req.outputs)
+  env=_find_comfy_env(pending.get('environment_id') or req.environment_id)
+  target=_reported_comfy_output(env,req.outputs,pending.get('output_prefix','')) if pending.get('destination')=='comfy' else _recover_comfy_asset(pending,env,req.outputs)
+  if target is None:raise RuntimeError('Comfy output not yet visible')
   _finish_comfy_recovery(pending,True,target=target)
   return {'ok':True,'recovered':str(target),'mode':pending.get('destination'),'source':pending.get('source')}
  except Exception:
@@ -5693,12 +5746,29 @@ def comfy_output_ready(req:ComfyOutputReadyRequest):
   with OUTPUT_RECOVERY_LOCK:PENDING_COMFY_OUTPUTS[pid]=pending
   raise
 
+def _ultimate_upscale_recipe(environment_id):
+ from .ultimate_upscale import recipe
+ shelf=(_read_comfy_tool_shelves().get('environments') or {}).get(str(environment_id))
+ if not shelf:raise HTTPException(409,'No cached Tool Shelf. Refresh Shelves for this Comfy environment first.')
+ try:return recipe(shelf,environment_id)
+ except ValueError as e:raise HTTPException(409,str(e))
+
+@app.get('/api/upscale/recipe/{environment_id}')
+def ultimate_upscale_recipe(environment_id:str):
+ _find_comfy_env(environment_id)
+ return {'recipe':_ultimate_upscale_recipe(environment_id)}
+
 @app.post('/api/refinement/dispatch')
 def refinement_dispatch(req:RefinementDispatchRequest):
  if req.destination not in {'beside','replace','comfy'}:raise HTTPException(400,'Unknown refinement destination')
  # Recipe from persistent config is authoritative; do not accept topology smuggled in per-run.
- saved=_load_config().get('refinement_recipe',{})
- if not saved or saved.get('roles')!=req.recipe.get('roles'):raise HTTPException(409,'Refinement recipe changed. Reopen Refine SDXL.')
+ saved=_ultimate_upscale_recipe(req.environment_id) if req.recipe.get('kind')=='ultimate_upscale' else _load_config().get('refinement_recipe',{})
+ from .ultimate_upscale import matches as upscale_recipe_matches
+ same=upscale_recipe_matches(saved,req.recipe) if saved.get('kind')=='ultimate_upscale' else saved.get('roles')==req.recipe.get('roles')
+ if not saved or not same:raise HTTPException(409,'Workflow changed. Reopen the run panel.')
+ if saved.get('kind')=='ultimate_upscale':
+  try:_refinement_prompt(saved,'validation.png',req,'N8Vision/validation')
+  except (ValueError,KeyError,TypeError) as e:raise HTTPException(400,str(e))
  payload=req.model_dump();payload['recipe']=saved
  return start_job('comfy:refinement',_refinement_batch,payload)
 
@@ -5807,7 +5877,7 @@ def _workshop_batch(reqdict,progress=None):
  shelf=_read_comfy_tool_shelves().get('environments',{}).get(str(env.get('id')))
  if not shelf:raise RuntimeError('Workshop Tool Shelf cache is empty. Use Refresh Shelves once, then retry.')
  submitted=[];total=max(1,len(req.paths))
- if req.destination in {'beside','replace'}:
+ if req.destination in {'beside','replace','comfy'}:
   batch_sources=[str(norm(x)) for x in req.paths if image_file(norm(x))]
   with OUTPUT_RECOVERY_LOCK:COMFY_RECOVERY_BATCHES[batch_id]={'id':batch_id,'kind':'workshop','total':len(batch_sources),'terminal':0,'recovered':0,'failed':0,'sources':batch_sources,'targets':[],'complete':False,'updated':time.time()}
  for i,rawpath in enumerate(req.paths):
@@ -5819,12 +5889,13 @@ def _workshop_batch(reqdict,progress=None):
   dialect=str((_checkpoint_dialect_from_comfy(row) or {}).get('preferred') if row else _target_prompt_dialect(model));positive=_translate_via_comfy(env,positive,dialect,f'workshop:{src.name}:positive');negative=_translate_via_comfy(env,negative,dialect,f'workshop:{src.name}:negative')
   token=uuid.uuid4().hex;prefix=f"N8Vision/{src.stem}_{_method_slug(fn.get('name') or 'Workshop')}_{token}"
   graph=_ws_compile(fn,shelf,str(rel).replace('\\','/'),req.model,positive,negative,prefix);_validate_comfy_prompt(graph)
+  release_models(force=True)
   body=json.dumps({'prompt':graph,'client_id':'n8vision-workshop'}).encode();rq=urllib.request.Request(base+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
   try:
    with urllib.request.urlopen(rq,timeout=20) as r:ans=json.loads(r.read().decode())
   except urllib.error.HTTPError as e:raise RuntimeError(f"Comfy rejected Workshop function {fn.get('name')} for {src.name}: HTTP {e.code}\n{e.read().decode(errors='replace')}") from e
   pid=ans.get('prompt_id');submitted.append({'source':str(src),'prompt_id':pid})
-  if pid and req.destination in {'beside','replace'}:
+  if pid and req.destination in {'beside','replace','comfy'}:
    _arm_comfy_output_recovery(pid,{'source':str(src),'destination':req.destination,'method':str(fn.get('name') or 'Workshop'),'environment_id':fn.get('environment_id'),'output_prefix':prefix,'job_token':token,'iteration':0,'batch_id':batch_id})
   if progress:progress(i+1,total)
  return {'submitted':submitted,'function':fn.get('name'),'destination':req.destination}

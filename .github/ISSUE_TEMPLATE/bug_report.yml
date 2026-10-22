@@ -6,7 +6,7 @@ body:
     id: version
     attributes:
       label: N8Vision version
-      placeholder: I.2t-f
+      placeholder: I.2t-l-Z2v
     validations:
       required: true
   - type: textarea
@@ -40,3 +40,8 @@ body:
     attributes:
       label: Logs or screenshots
       description: Attach screenshots or paste relevant console output. Remove credentials.
+  - type: textarea
+    id: beside_recovery
+    attributes:
+      label: Beside recovery details (if applicable)
+      description: If Beside removed an original, include the run-mode sequence, version, donor/output paths (redact personal folders), on-disk versus grid state, and recovery mode/donor/output console lines. This isolated historical report has not been reproduced.

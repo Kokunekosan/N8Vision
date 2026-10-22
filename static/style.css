@@ -337,3 +337,30 @@ body.mobileArchive #filterDrawer .magnetBoard{flex:1;min-height:120px;height:aut
 #rail .menuSection > summary:focus-visible{outline:2px solid #87baff;outline-offset:3px}
 
 #grid .card{user-select:none;-webkit-user-select:none}
+
+/* Ring cards have fixed pixel height: diagnostics must remain inside that frame. */
+body[data-grid-detail="diagnostic"] .visualRow .detailBadges{position:absolute;bottom:3px;max-height:70%;overflow:auto;pointer-events:auto;background:#111e;border-radius:3px}
+body[data-grid-detail="diagnostic"] .visualRow .detailBadges .badges{max-height:none;background:transparent}
+
+
+/* Three actual children: header, scrolling body, fixed action footer. */
+.jobPrepPanel.refinePanel{grid-template-rows:auto minmax(0,1fr) auto;overflow:hidden}
+.refinePanel .refineBody{min-height:0}
+#refineWizard .jobPrepFoot{flex-wrap:wrap;flex-shrink:0}
+#refineWizardFoot{flex:1 1 100%;overflow-wrap:anywhere}
+#refineRunActions{display:contents}
+#refineRunActions[hidden]{display:none}
+#refineRunActions .refineKeepSettings{display:flex;align-items:center;gap:8px;margin:0}
+#refineRunActions .refineKeepSettings input{width:auto}
+#refineRunActions>.tiny{display:none}
+.refineDestinationControl{position:relative;margin-left:auto}
+#refineDestinationButton,#refineWizardNext{width:150px;min-height:36px;box-sizing:border-box}
+#refineDestinationMenu{position:absolute;bottom:calc(100% + 6px);right:0;background:#222;border:1px solid #777;padding:6px;z-index:2;min-width:150px}
+#refineDestinationMenu[hidden]{display:none}
+#refineDestinationMenu button{display:block;width:100%;margin:3px 0}
+@media(max-width:500px){#refineRunActions .refineKeepSettings{flex-basis:100%}}
+
+#ultimateUpscaleControls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}
+#ultimateUpscaleControls[hidden]{display:none}
+#ultimateUpscaleControls input[type=checkbox]{width:auto;display:block}
+.refineBody:has(#refineGraphStage[hidden]){grid-template-columns:1fr}

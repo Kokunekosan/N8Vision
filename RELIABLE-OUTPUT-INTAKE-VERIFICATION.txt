@@ -1,0 +1,16 @@
+Z2l: reliable post-batch output intake and retryable grid refresh.
+Completed outputs are registered directly with active in-scope New Noticers,
+statting only the returned file, not waiting for directory events/timestamps.
+Existing paths deduplicated. Ignore/image rules remain enforced before intake.
+Batch refresh stays pending until applied; changed view/root or transient errors
+retry on existing5second loop, including mobile, and wait while inspector open.
+Targeted metadata response merges current catalog rather than dropping concurrent
+additions. No false grid-refreshed success on discarded result. Only successfully
+applied batches removed. Current temp_home restored prepaint, single endbatch
+regrid retained. Different-root batch waits until relevant view is active.
+Tests direct intake without sweep, duplicates/outside/type safety, pending refresh
+retry/removal, actual concurrent-catalog merge, frontend/Python syntax. Live batch
+not tested. Browser pending refresh queue is session memory, not restart resume.
+Consolidated overZ2b or any later patch, including all C..K dependencies. Apply
+when jobs finish; restart/refresh. ZIP reconstruction/CRC/hash verified.
+GitHub/live unchanged; no saved-view cache introduced.

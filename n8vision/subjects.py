@@ -8,7 +8,8 @@ REVISION='e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4'
 PIPELINE='subjects-s6'
 NAME_MIN_CONFIDENCE=.65
 INFERENCE_LOCK=threading.RLock()
-_models={}
+from .model_residency import ModelCache
+_models=ModelCache('Subjects')
 DEFAULT_CLASSES=['woman','man','girl','boy','person','bride','groom','dog','cat','horse','bird','rabbit','wolf','fox','bear','lion','tiger','deer','fish','dragon','robot','alien','elf','fairy','monster','car','truck','motorcycle','bicycle','boat','airplane','hamburger','sandwich','pizza','cake','fruit','food','flower','tree','plant','statue','toy','instrument','chair','table','object']
 VERIFICATION_CLASSES={
  'human':['person','woman','man','girl','boy','catgirl','nekojin','anthropomorphic cat person','rider','driver','motorcyclist','cyclist','elf','alien','robot'],
@@ -92,6 +93,7 @@ def matching_annotation(candidate,rows,shape,used=None):
   except (ValueError,TypeError,KeyError,OverflowError):continue
  return best
 
+@_models.use
 def foreground(image,cache):
  import torch
  from torchvision import transforms
@@ -109,6 +111,7 @@ def foreground(image,cache):
  import numpy as np
  return np.asarray(mask)>127
 
+@_models.use
 def world(image,classes,weights,confidence=.2,single=False):
  from ultralytics import YOLOWorld
  import ultralytics.nn.text_model as text_model

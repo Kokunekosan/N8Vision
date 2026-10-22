@@ -1,0 +1,15 @@
+Z2o: regenerated same-path files lose stale deletion/forward placeholders.
+Live read-only check latest9batch:9recovered0failed, all9targets exist. User confirms
+repeated donor tests deleting failed siblings. Merge {...old,...fresh} retained
+_n8Tombstone/_n8ForwardTo when recovery reused deleted sibling filename.
+Verified metadata merge now removes those flags without mutating old active view;
+ready-before-regrid commit retained. At commit, bounded pager clears matching
+path delete/forward overlays, updates cached records so later snapshots cannot
+reapply old placeholder to regenerated file. Untouched placeholders remain.
+Direct Noticer intake accepts changed size/mtime at known path, suppresses exact
+unchanged duplicates. No hashing or whole archive verification added.
+Tests9records with3stale markers ->9live, oldrecords unchanged, pager revival
+survives restore, real delete/recreate samefilename intake, JS/Python syntax.
+Live grid confirmation pending; historical missing3 not inspected in browser.
+Consolidated overZ2b or later incl all dependencies, apply after jobs finish,
+restart/refresh. ZIP reconstruction/CRC/hash verified; GitHub/live untouched.

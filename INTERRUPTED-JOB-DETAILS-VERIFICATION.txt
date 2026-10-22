@@ -1,0 +1,15 @@
+Z2i: more useful interrupted-job diagnostics and durable diagnostic journal.
+Popup includes recorded kind/id/phase/progress/model/last image/time/error and
+Comfy recovered/failed counts when known. Invalid journal explicitly says details
+unavailable; no fake0/0. Backup source is disclosed, lastcheckpoint not exactcrash.
+Journal snapshots include queued/running/recovering, selected diagnostic fields
+(no prompts), progress checkpoint writes at most every2seconds plus transitions.
+Unique temp+flush+fsync+replace, valid previous backup, serialized writer. Empty
+clean snapshot prevents replaying older active backup. Startup discards old work,
+never auto-resumes. Existing archive-validation popup timing unchanged.
+Tests corrupt main fallback, failed atomicreplace preserves prior, cleanempty
+wins over activebackup, summarycounts/prompt omission, popupdetails/invalidtext,
+frontend/Python syntax. Physical power-cut durability not guaranteed/tested.
+Apply overZ2h after active jobs finish, restart/refresh. Cannot reconstruct journal
+already purged by prior version. ZIP reconstruction/CRC/hash verified.
+GitHub/live installation unchanged; queued public Beside bug notice still pending.

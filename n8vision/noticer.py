@@ -116,6 +116,26 @@ class NewNoticer:
             self.last_check = time.monotonic()
             return changed
 
+    def record_file(self, path):
+        """Authoritative completed-output intake, independent of directory timestamps."""
+        path=Path(path).resolve()
+        try:relative=path.relative_to(self.root.resolve())
+        except ValueError:return False
+        if not self.recursive and len(relative.parts)!=1:return False
+        if path.suffix.lower() not in self.extensions:return False
+        try:
+            stat=path.stat()
+            if not path.is_file() or not stat.st_size:return False
+        except OSError:return False
+        raw=str(path)
+        with self.lock:
+            previous=self.files.get(raw)
+            if previous and previous.get('size')==stat.st_size and previous.get('mtime')==stat.st_mtime:return False
+            record=dict(name=path.name,path=raw,size=stat.st_size,mtime=stat.st_mtime)
+            self.files[raw]=record;self.events.append(record)
+            self.dirty.add(str(path.parent))
+        return True
+
     def packet(self, since, limit=500):
         with self.lock:
             since = min(max(0, since), len(self.events))

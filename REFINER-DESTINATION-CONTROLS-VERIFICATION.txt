@@ -1,0 +1,12 @@
+Z2q: Fix refiner footer disappearing after metadata loads. Refiner panel has
+three children but inherited four grid rows: body occupied auto row, footer the
+shrinking minmax row. Explicit header/body/footer grid with bounded scrolling body.
+Destination now compact 150px button matching Send Jobs. Click to choose Replace,
+Beside or Output. Every opening clears choice; sending requires explicit choice.
+Keep settings retained, destination excluded. Loading also blocks send.
+Tests: JS/Python syntax; actual validity function in VM blocks absent destination,
+accepts each of three choices, blocks while loading; markup and CSS structure.
+No running-browser visual check. Consolidated over published Z2b or later.
+ZIP CRC, exact contents and incremental reconstruction verified.
+Finish jobs, stop Vision, extract patch, restart and refresh browser.
+Live installation and GitHub unchanged.

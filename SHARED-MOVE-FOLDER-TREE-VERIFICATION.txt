@@ -1,0 +1,17 @@
+Z2m: Move destination picker shares Explore's folder architecture.
+Seed one parent/child index from existing grid folder index and volume list.
+Authoritative background directory-tree snapshots update additions/removals,
+including empty folders, and prevent stale image parents resurrecting deletions.
+Known complete folders read synchronously with zero network requests on open or
+navigation. Inferred partial ancestors show known children immediately while
+first complete listing loads in background. Entirely unknown locations need one
+initial discovery; deduplicate requests, then background checks maintain visited
+external destinations. No foreground wait/re-enumeration for known locations.
+Open picker receives background tree changes, preserves unchanged DOM contents;
+move queue/confirmation/move-time destination validation unchanged.
+Tests gridderived parent/child paths, authoritative add/remove/empty, stalefolder
+reseed prevention, actual known-folder moveBrowse zero requests, JS/Python syntax.
+Live destination performance untested. Browser reload still rebuilds its cache.
+Consolidated overpublishedZ2b or later, includes all earlier helper dependencies.
+Apply after activejobs finish, restart/refresh. ZIP reconstruction/CRC/hash checked.
+Live installation/GitHub unchanged. Pending public Beside incident notice retained.

@@ -1,0 +1,17 @@
+Z2n: five-second automatic-regrid warning plus real card readiness gate.
+Completed-batch metadata merges into a local candidate catalog. Calculate the
+anchored filtered layout synchronously without changing active catalog/layout;
+construct and hydrate required visible row prefabs offstage. Keep existing DOM,
+row-ready cache and catalog until all visible thumbnails report ready. Then
+commit candidate catalog and ready prefabs together and render at temp_home.
+Offscreen buffer/scouts are not a prerequisite. Failed/aborted hydration, changed
+anchor/view/root/catalog/length/pixel epoch/layout or open inspector cancel commit;
+existing pending-batch retry handles another attempt. No timer-only assumption.
+Warning5s then Preparing refreshed cards until attempt finishes. ManualRedraw and
+startup progressive-row behavior unchanged. Browser normal reload unchanged.
+VM tests actual refresh with deferred images proves old catalog/rows retained,
+single ready-only commit, failed images no commit, changed anchor no commit;
+five-second timer and frontend/Python syntax. Live browser timing untested.
+Consolidated overZ2b or later, all intervening helper dependencies included.
+Apply after activejobs finish, restart/refresh. ZIP reconstruction/CRC/hash verified.
+Live/GitHub unchanged; Beside public incident notice still pending publication.

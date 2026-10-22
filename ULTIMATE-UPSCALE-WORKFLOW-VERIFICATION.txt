@@ -1,0 +1,23 @@
+Z2t: Ultimate SD Upscale action from user upscale_only.json workflow.
+Dedicated button reuses Refiner run panel with repeatable zero-to-many LoRAs.
+Pipeline: source, checkpoint, LoRA chain, ImpactWildcardEncode positive,
+CLIPTextEncode negative, UpscaleModelLoader, UltimateSDUpscale, bellringer, saver.
+Connects previously missing checkpoint VAE to UltimateSDUpscale.
+Preserves supplied upscale/tile/seam defaults. Exposes installed upscale model,
+scale, denoise, tile/seam controls, plus checkpoint/steps/CFG/sampler/scheduler.
+Per-image prompts recovered as Refiner; positive text sent fixed through Impact
+rather than relying on Comfy browser populate hook. Inline syntax may be handled
+by Impact itself. Source steps never added to tile steps. Checkpoint/LoRA seed
+selection comes from source metadata; no mandatory embedded checkpoint or LoRA.
+Keep settings has separate per-workflow profiles; destination always unset.
+Same batch progress/recovery/destination and ready-card refresh pipeline.
+Server reconstructs topology from cached installed shelf, validates widgets before
+queueing, rejects absent dependencies/out-of-range choices. COMBO dropdown support.
+Tests: actual installed schemas, complete required inputs and socket type links,
+0/1/3 LoRAs, VAE, prompts, steps, zero CFG, output prefix; reject invalid settings.
+Frontend syntax, generated controls/defaults/booleans/model choices, Refine
+isolation, separate persisted profiles; Python AST and archive integrity passed.
+No live generation or browser visual test; no live installation/GitHub changes.
+Finish jobs, stop Vision, extract patch, restart/refresh; click Ultimate SD Upscale,
+choose model/LoRAs/settings, choose Destination, Send Jobs. Refresh Tool Shelf if
+missing installed dependencies. Includes all changes since published Z2b.

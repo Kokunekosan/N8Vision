@@ -1,32 +1,41 @@
-# N8Vision alpha I.2t-l-Z2b — nightly update
+# N8Vision alpha I.2t-l-Z2v
 
-Complete package through Z2b, including Z1z, Z2a and Z2b; no patch stacking.
+Complete package through Z2v; no patch stacking.
 
-## Nightly fixes — October 18, 2026
+## Latest update - October 22, 2026
 
-- Explore detects created/removed folders, including empty ones, using background
-  directory checks. Tree changes do not rebuild or reposition the image grid.
-- Ctrl+A and Select Shown exclude deleted/moved placeholders and queued moves.
-- Settings / Ignore contents adds editable filename, full-path and wildcard rules.
-  Default: log.html. Matching files stay on disk; save reloads library counts.
-- Successful ComfyUI Replace recovery invalidates old masks, detections, quality
-  receipts, embeddings and corrections, refreshes file stats and cached identity.
-  Beside/output-only modes preserve the original. Frozen teaching examples remain.
-- Replacement invalidation applies after updating, not to already completed edits.
-  Wait for active batches to finish before updating. Running inference jobs are
-  not cancelled by this mechanism; general external-edit monitoring is not added.
+- Ultimate SD Upscale now has a dedicated action with editable scale, denoise,
+  tiling and seam controls, an expandable LoRA chain and the connected checkpoint VAE.
+- Refine and Upscale keep settings independently, including their opt-in checkbox.
+  Destination is a compact chooser: select Replace, Beside or Output before sending.
+- Workshop node pickers no longer stop at 30 matches. Clearly video/audio-specific
+  tools are excluded; shared image-processing tools remain available.
+- Comfy recovery timeout follows batch inactivity, with each returned result
+  extending the window. Batch status shows the number complete.
+- New and regenerated same-name outputs clear stale placeholders. Automatic grid
+  refresh prepares visible cards first and retries deferred batch refreshes.
+- The move picker reuses the folder architecture already discovered by the library.
+- Diagnostic badges refresh on changed assets. Idle Vision models are released
+  after two minutes; Comfy handoff also releases idle models.
+- Atomic active-job journals preserve more useful interruption diagnostics.
+
+An isolated report of Beside removing its original remains unconfirmed. See
+[known issues and reporting details](KNOWN-ISSUES.md) if it happens again.
 
 ## Install / update
 
 New: extract to an empty folder, run install.cmd, then N8Vision.cmd.
 Existing: finish active jobs, stop Vision, replace application source while
 preserving .venv/data/cache/models/settings, restart and refresh browsers.
-Windows/Python3.14; optional heavier profiles/models retain their requirements.
 
-Checks: Python/frontend syntax; real temporary directory-tree creation/removal
-and zero unchanged enumeration; ignore matching/validation; SQLite replacement
-cleanup and actual recovery replace/retry/beside branches; clean source manifest,
-ZIP CRC and byte/hash checks. Live nightly fixes still need broader validation.
-No personal archive, credentials, weights or runtime environment included.
+Ultimate SD Upscale requires its Comfy node, ImpactWildcardEncode and an installed
+upscale model. Refresh the Tool Shelf if installed dependencies are missing.
+Comfy installations, models and workflows are not modified by this release.
 
-https://github.com/Kokunekosan/N8Vision/issues
+Validation includes installed-node schema and graph/socket checks for 0/1/3 LoRAs,
+VAE wiring, browser JSON revision regression, settings isolation and migration,
+model residency, journal, file intake/recovery, and package integrity checks.
+The user confirmed the upscale workflow functions. Output quality depends on the
+chosen model and settings; broader hardware/browser testing remains welcome.
+
+Report bugs: https://github.com/Kokunekosan/N8Vision/issues

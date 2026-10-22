@@ -5,6 +5,12 @@ class MobileArchiveWindow {
  close(){this.closed=true;this.version++;this.pages.clear();this.pending.clear();this.edits.clear();this.pathEdits.clear();this.observationEdits.clear();}
  rememberObservations(path,observations){this.observationEdits.set(path,observations);}
  remember(file){if(Number.isInteger(file?._n8ArchiveIndex))this.edits.set(file._n8ArchiveIndex,{...file});if(file?.path&&file.observations)this.observationEdits.set(file.path,file.observations);}
+ acceptVerified(files){
+  const key=p=>String(p).replace(/\//g,'\\').toLowerCase(),verified=new Map(files.map(f=>[key(f.path),f]));
+  for(const path of this.pathEdits.keys())if(verified.has(key(path)))this.pathEdits.delete(path);
+  for(const [index,file] of this.edits){const fresh=verified.get(key(file.path));if(fresh){const next={...file,...fresh};delete next._n8Tombstone;delete next._n8ForwardTo;this.edits.set(index,next)}}
+  for(const file of files)this.remember(file);
+ }
  deletePaths(paths){for(const path of paths)this.pathEdits.set(path,{deleted:true});}
  movePaths(items,rootOf,{leavePlaceholder=false}={}){for(const item of items){const a=rootOf(item.from),b=rootOf(item.to);this.pathEdits.set(item.from,!leavePlaceholder&&a&&a===b?{to:item.to}:{forward:item.to});}}
  restore(file){

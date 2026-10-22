@@ -1,0 +1,15 @@
+Z2e: release Vision cached models after120seconds idle, checked every10seconds.
+Per-cache-key leases protect active inference; idle timer starts at operation
+completion and resets on reuse. Covers cached CLIP/Yuan/text features/SAM/YOLO
+and subject BiRefNet/YOLOWorld. Short-lived worker process behavior unchanged.
+Before each existing Comfy prompt handoff, release unleased Vision cached models
+immediately. Busy keys are flagged and released after their last lease completes.
+Remove model references, clean unused quality worker pools, collect garbage and
+release unused CUDA allocator blocks without importing torch in Lite.
+No model weight deletion/download changes, no forced Comfy unload, no active
+inference interruption. Active Vision work can still overlap Comfy until done.
+Tests fake clock120sec boundary, lease completion reset, nested lease handling,
+per-key/cross-thread protection, force handoff deferred release, evaluated
+FastAPI route signatures and Python syntax. Actual GPU memory drop unmeasured.
+Apply overZ2d, restart after active jobs finish and refresh browser. No installer.
+ZIP reconstruction/CRC/entry bytes/SHA256 verified; live/GitHub unchanged.
