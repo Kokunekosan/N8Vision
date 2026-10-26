@@ -18,7 +18,7 @@ def profile(edition=None):
 def route_capability(path,method='GET'):
  if path.startswith('/api/subjects'):return 'subject_intelligence'
  if path.startswith(('/api/mv/','/api/models','/api/native/','/api/compare/','/api/learning/')) or path=='/api/search/semantic':return 'inference'
- if path.startswith(('/api/comfy/','/api/environments','/api/refinement/','/api/workshop/','/api/training/')) or path=='/api/config/prompt-translator':return 'processing'
+ if path.startswith(('/api/comfy/','/api/environments','/api/refinement/','/api/workshop/','/api/workflow-packs','/api/training/')) or path=='/api/config/prompt-translator':return 'processing'
  if (path=='/api/jobs' and method=='POST') or path=='/api/config/sanity':return 'inference'
  return None
 

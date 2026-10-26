@@ -1,41 +1,25 @@
-# N8Vision alpha I.2t-l-Z2v
+# N8Vision alpha I.2t-l-Z3s
 
-Complete package through Z2v; no patch stacking.
+Complete package through Z3s; no patch stacking.
 
-## Latest update - October 22, 2026
+## October 26, 2026
 
-- Ultimate SD Upscale now has a dedicated action with editable scale, denoise,
-  tiling and seam controls, an expandable LoRA chain and the connected checkpoint VAE.
-- Refine and Upscale keep settings independently, including their opt-in checkbox.
-  Destination is a compact chooser: select Replace, Beside or Output before sending.
-- Workshop node pickers no longer stop at 30 matches. Clearly video/audio-specific
-  tools are excluded; shared image-processing tools remain available.
-- Comfy recovery timeout follows batch inactivity, with each returned result
-  extending the window. Batch status shows the number complete.
-- New and regenerated same-name outputs clear stale placeholders. Automatic grid
-  refresh prepares visible cards first and retries deferred batch refreshes.
-- The move picker reuses the folder architecture already discovered by the library.
-- Diagnostic badges refresh on changed assets. Idle Vision models are released
-  after two minutes; Comfy handoff also releases idle models.
-- Atomic active-job journals preserve more useful interruption diagnostics.
-
-An isolated report of Beside removing its original remains unconfirmed. See
-[known issues and reporting details](KNOWN-ISSUES.md) if it happens again.
+- Large-library browsing streams ordered discovery chunks without waiting for a whole-tree inventory. Root clicks coalesce; optional startup work waits for browsing. A pending scroll step completes when its row is ready.
+- New detections update badges, boxes, masks and filters across loaded and cached cards. Inspector corrections preserve box selection and reuse unchanged mask overlays.
+- Inspector and mask-studio batch counters show your position. Studio controls stay visible while detections scroll; correction labels are preloaded and deduplicated.
+- YOLO training accepts box-only examples and explicit rejected detections as background evidence. Manual and automatic evolution share a single FIFO training queue, with epoch progress.
+- Automatic maintenance has its own saved epoch limit, default 20, instead of inheriting a model's earlier training run. Existing running jobs keep their original limits.
+- Active jobs stay above completed history; polling preserves wake-up requests and avoids waiting for a full observation refresh.
+- Forget shown updates affected cards instead of rebuilding the library. Configuration writes use unique atomic temporary files with bounded sharing-violation retries. Shutdown archive requests receive a retryable response.
+- Replaced Comfy outputs invalidate old pixels and show an In-Process banner. Optional workflow-pack processing preserves original PNG generation text.
+- Check-for-Updates.cmd checks official GitHub releases and downloads a complete ZIP on request, checking size, ZIP integrity and the release checksum when supplied. It never applies an update automatically.
+- Includes YOLO training guidance in docs/YOLO-TRAINING.md and the optional workflow-pack infrastructure. Model weights and the Watermarkboy expansion remain separate.
 
 ## Install / update
 
 New: extract to an empty folder, run install.cmd, then N8Vision.cmd.
-Existing: finish active jobs, stop Vision, replace application source while
-preserving .venv/data/cache/models/settings, restart and refresh browsers.
+Existing: finish active jobs and stop Vision. Replace application source while preserving .venv, data, cache, models and settings; restart and refresh browsers.
 
-Ultimate SD Upscale requires its Comfy node, ImpactWildcardEncode and an installed
-upscale model. Refresh the Tool Shelf if installed dependencies are missing.
-Comfy installations, models and workflows are not modified by this release.
+Regression checks cover discovery streaming, observation/card synchronization, correction selection, training FIFO and cancellation, maintenance epochs, atomic writes, shutdown retries, updater download integrity and package reconstruction. Full-library timing and GPU training behavior vary by system; these checks do not establish model accuracy.
 
-Validation includes installed-node schema and graph/socket checks for 0/1/3 LoRAs,
-VAE wiring, browser JSON revision regression, settings isolation and migration,
-model residency, journal, file intake/recovery, and package integrity checks.
-The user confirmed the upscale workflow functions. Output quality depends on the
-chosen model and settings; broader hardware/browser testing remains welcome.
-
-Report bugs: https://github.com/Kokunekosan/N8Vision/issues
+The intermittent Beside donor-removal report remains unconfirmed. See KNOWN-ISSUES.md and https://github.com/Kokunekosan/N8Vision/issues/1 for reporting details.

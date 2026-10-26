@@ -364,3 +364,37 @@ body[data-grid-detail="diagnostic"] .visualRow .detailBadges .badges{max-height:
 #ultimateUpscaleControls[hidden]{display:none}
 #ultimateUpscaleControls input[type=checkbox]{width:auto;display:block}
 .refineBody:has(#refineGraphStage[hidden]){grid-template-columns:1fr}
+
+/* Keep the existing pixels and card geometry while owned Comfy work is pending. */
+.card.inProcess .thumb{position:relative;overflow:hidden}
+.card.inProcess .thumb::after{content:'In-Process';position:absolute;left:-10%;top:44%;width:120%;box-sizing:border-box;padding:5px 0;text-align:center;font-size:15px;font-weight:900;letter-spacing:2px;color:#111;background:repeating-linear-gradient(135deg,#f4ce36 0 14px,#242424 14px 20px);text-shadow:0 0 3px #ffe45c,1px 0 #ffe45c,-1px 0 #ffe45c,0 1px #ffe45c,0 -1px #ffe45c;transform:rotate(-9deg);border-block:2px solid #111;box-shadow:0 2px 5px #0009;z-index:5;pointer-events:none}
+
+#jobPrep.workflowPackJob .jobPrepBody{grid-template-columns:1fr}
+#jobPackDestinationWrap[hidden],#jobPackDestinationMenu[hidden]{display:none}
+#jobPackDestinationButton,#jobExecute{width:150px;min-height:36px}
+#jobPackDestinationMenu{position:absolute;bottom:calc(100% + 6px);right:0;background:#222;border:1px solid #777;padding:6px;z-index:3;min-width:150px}
+#jobPackDestinationMenu button{display:block;width:100%;margin:3px 0}
+
+#jobPrep.workflowPackJob .jobPrepFoot{flex-wrap:wrap}
+#jobPrep.workflowPackJob #jobPrepCount{flex-basis:100%}
+
+/* Z3d: keep teaching actions on screen; detections own their scroll area. */
+.viewerWork{grid-template-columns:minmax(0,1fr) max(290px,var(--rail))}
+.visionTeach{display:flex;flex-direction:column;min-height:0;overflow:hidden;font-size:var(--rail-font);padding:var(--rail-pad)}
+.visionTeach>*{flex-shrink:0;min-width:0}
+.visionTeach .teachObs{flex:1 1 0;min-height:48px;max-height:none;overflow:auto;overscroll-behavior:contain}
+.visionTeach .teachObs button{flex:0 0 auto;min-height:28px;line-height:1.35;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+.visionTeach button,.maskPanel button{font-size:var(--rail-font);padding:var(--control-py) var(--control-px)}
+.visionTeach .buttonGrid,.visionTeach .teachGroundButtons{margin-top:5px;gap:4px}
+.visionTeach hr{margin:6px 0}
+#teachSelected{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+@media(max-width:900px){
+ .viewerWork{grid-template-columns:1fr;grid-template-rows:minmax(100px,1fr) auto}
+ .visionTeach{max-height:none}
+ .visionTeach .teachObs{flex:0 1 100px;max-height:100px}
+}
+
+/* Z3e: image position stays visible alongside batch navigation. */
+.inspectionPosition{display:inline-block;flex-shrink:0;font-size:var(--rail-font);font-variant-numeric:tabular-nums;font-weight:600;color:#eee;padding:3px 6px;background:#181818d9;border-radius:4px;white-space:nowrap}
+.viewerDisplayTools{flex-wrap:wrap;max-width:calc(100% - 48px)}
+.maskHead{flex-wrap:wrap}

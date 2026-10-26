@@ -17,6 +17,9 @@ class NewNoticer:
         self.events = []
         self.changed = []
         self.lock = threading.RLock()
+        self.foreground_lock = threading.Lock()
+        self.foreground_count = 0
+        self.foreground_pause = threading.Event()
         self.last_check = 0
         self.intake_cursor = 0
         self.recheck_cursor = 0
@@ -63,8 +66,30 @@ class NewNoticer:
                 api.CloseHandle(handle)
         threading.Thread(target=listen, name='n8-directory-events', daemon=True).start()
 
+    def begin_foreground(self):
+        with self.foreground_lock:
+            self.foreground_count += 1
+            self.foreground_pause.set()
+
+    def end_foreground(self):
+        with self.foreground_lock:
+            self.foreground_count -= 1
+            if not self.foreground_count:self.foreground_pause.clear()
+
+    def seed_directory(self, raw, stamp):
+        with self.lock:self.dirs[raw] = stamp
+
+    def seed_records(self, records):
+        with self.lock:
+            for record in records:
+                prior = self.files.get(record['path'])
+                if prior and prior.get('size') == record['size'] and prior.get('mtime') == record['mtime']:continue
+                self.files[record['path']] = dict(record)
+                self.events.append(dict(record))
+
     def sweep(self):
         with self.lock:
+            if self.foreground_pause.is_set():return []
             changed = []
             pending = list(self.dirs) or [str(self.root)]
             # One safety listing per sweep catches coarse/stale filesystem stamps.
@@ -76,6 +101,7 @@ class NewNoticer:
             dirty = self.dirty
             self.dirty = set()
             while pending:
+                if self.foreground_pause.is_set():break
                 raw = pending.pop()
                 if raw in visited:
                     continue

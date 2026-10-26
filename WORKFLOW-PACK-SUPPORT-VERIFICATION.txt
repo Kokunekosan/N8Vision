@@ -1,0 +1,1 @@
+Z3s includes Z3r fixes and the standalone update fetcher. Regression tests passed for verified download, checksum rejection, partial cleanup and release selection. See release notes for scope and limitations.

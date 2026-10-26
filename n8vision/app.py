@@ -16,6 +16,8 @@ _missing=missing_modules(EDITION['edition'])
 if _missing:raise RuntimeError("N8Vision edition dependencies missing: "+", ".join(_missing))
 
 ROOT=Path(__file__).resolve().parent.parent; STATIC=ROOT/'static'; DATA=ROOT/'data'; DATA.mkdir(exist_ok=True)
+from .pixel_revisions import PixelRevisions
+PIXEL_REVISIONS=PixelRevisions(DATA/'pixel-revisions.json')
 MODELS=Path(__file__).resolve().parent/'models'; ULTRA_MODELS=MODELS/'ultralytics'
 CACHE=ROOT/'cache'; HF_CACHE=CACHE/'huggingface'; HF_CACHE.mkdir(parents=True,exist_ok=True)
 # Keep downloaded Hub assets with N8Vision instead of the user's C: profile.
@@ -40,7 +42,7 @@ async def edition_capabilities(request:Request,call_next):
  return await call_next(request)
 
 @app.get('/api/edition')
-def edition_info():return {**EDITION,'version':'I.2t-l-Z2v','subject_intelligence_available':EDITION['subject_intelligence']}
+def edition_info():return {**EDITION,'version':'I.2t-l-Z3s','subject_intelligence_available':EDITION['subject_intelligence']}
 
 LOCAL_ATTENTION=0
 @app.get('/api/instance')
@@ -70,12 +72,19 @@ LENS_CONFIG_LOCK=threading.RLock()
 JOB_JOURNAL_PATH=DATA/'active_jobs.json'
 STALE_JOB_REPORT:dict[str,Any]={'count':0,'jobs':[]}
 OBS_REV=0
+OBS_EPOCH=str(time.time_ns())
 STOP_REQUESTED=False
 SHUTDOWN_SEALED=False
 SHUTDOWN_BROWSER_ACK=threading.Event()
 DB_ACTIVITY=threading.Condition(); DB_ACTIVE=0; DB_ACCEPTING=True
 # One archive gate: database operations wait their turn instead of competing until SQLite returns 'database is locked'.
 DB_QUEUE_LOCK=threading.RLock()
+class DatabaseUnavailable(RuntimeError):pass
+
+@app.exception_handler(DatabaseUnavailable)
+async def database_unavailable_response(request,exception):
+ return Response(json.dumps({'detail':'N8Vision is restarting or shutting down; the archive is temporarily unavailable.','code':'archive_temporarily_unavailable'}),status_code=503,media_type='application/json',headers={'Retry-After':'1'})
+
 # P.53 fixed recovery slots: 0=live, A=last clean shutdown, B=verified fallback.
 SESSION_ZERO=SESSIONS/'session-0.sqlite3'
 SESSION_A=SESSIONS/'session-A.sqlite3'
@@ -109,7 +118,7 @@ CONFIG_DEFAULTS={'collisions_always_rename':True,
  'prompt_translator':{'model':'','type':'stable_diffusion','device':'default'},
  'checkpoint_library':{'environment_id':'','updated':0,'checkpoints':{}},
  'comfy_tool_shelves':{'updated':0,'environments':{}},
- 'learning':{'maintenance_enabled':False,'maintenance_time':'03:00','correction_threshold':25,'last_maintenance_day':''}
+ 'learning':{'maintenance_enabled':False,'maintenance_time':'03:00','correction_threshold':25,'maintenance_epochs':20,'last_maintenance_day':''}
 }
 NETWORK_SESSION_ID=uuid.uuid4().hex
 PAIRINGS:dict[str,float]={}
@@ -188,8 +197,9 @@ def _merge_defaults(dst,defaults):
   elif isinstance(v,dict) and isinstance(out.get(k),dict):out[k]=_merge_defaults(out[k],v)
  return out
 def _save_config(d):
- CONFIG_PATH.parent.mkdir(parents=True,exist_ok=True)
- tmp=CONFIG_PATH.with_suffix('.tmp');tmp.write_text(json.dumps(d,indent=2,sort_keys=True),encoding='utf-8');tmp.replace(CONFIG_PATH)
+ from .atomic_config import save_json
+ save_json(CONFIG_PATH,d)
+
 def _load_config():
  d={}
  try:
@@ -632,7 +642,7 @@ def db():
  with DB_ACTIVITY:
   if not DB_ACCEPTING:
    DB_QUEUE_LOCK.release()
-   raise RuntimeError('N8Vision database is shutting down')
+   raise DatabaseUnavailable('N8Vision database is shutting down')
   DB_ACTIVE+=1
  c=None
  try:
@@ -1025,7 +1035,7 @@ def _cache_reusable(source:Path,kind:str)->Path|None:
   root=thumbnail_cache_root(source);st=source.stat();sha=_tracked_sha(str(source));c=_cache_db(root)
   try:
    row=c.execute("SELECT * FROM assets WHERE content_sha=? AND kind=? AND state IN ('active','purgatory') ORDER BY updated DESC LIMIT 1",(sha,kind)).fetchone() if sha else None
-   if not row:row=c.execute("SELECT * FROM assets WHERE size=? AND mtime_ns=? AND kind=? AND state IN ('active','purgatory') ORDER BY updated DESC LIMIT 1",(st.st_size,st.st_mtime_ns,kind)).fetchone()
+   if not row:row=c.execute("SELECT * FROM assets WHERE source_path=? AND size=? AND mtime_ns=? AND kind=? AND state IN ('active','purgatory') ORDER BY updated DESC LIMIT 1",(str(source),st.st_size,st.st_mtime_ns,kind)).fetchone()
    if row and Path(row['asset_path']).is_file():
     c.execute("UPDATE assets SET source_path=?,content_sha=COALESCE(?,content_sha),state='active',volume_key=?,updated=? WHERE asset_path=?",(str(source),sha,_volume_key(source),time.time(),row['asset_path']));c.commit();return Path(row['asset_path'])
   finally:c.close()
@@ -1149,7 +1159,9 @@ def provider_status():
 @app.get('/')
 def index():return FileResponse(STATIC/'index.html',headers={'Cache-Control':'no-store, max-age=0'})
 @app.get('/api/health')
-def health():return {'ok':True,'version':'I.2','providers':provider_status(),'hardware':hardware_status()}
+def health():
+ if STOP_REQUESTED or not DB_ACCEPTING:raise DatabaseUnavailable('N8Vision is not ready during shutdown/restart')
+ return {'ok':True,'version':'I.2','providers':provider_status(),'hardware':hardware_status()}
 @app.get('/api/roots')
 def roots():return {'roots':_mounted_roots()}
 
@@ -1268,8 +1280,11 @@ def _noticer_tick():
  with NOTICERS_LOCK:watchers=list(NOTICERS.values())
  for watcher in watchers:
   if STOP_REQUESTED:return
+  if _browse_gate_paused():return
   try:
-   watcher.sweep();registered=_noticer_register(watcher)
+   watcher.sweep()
+   if _browse_gate_paused():return
+   registered=_noticer_register(watcher)
    if registered:LOG.info('New Noticer: %s · %d new image(s)',watcher.root,registered)
   except Exception:LOG.exception('New Noticer intake failed: %s',watcher.root)
  # A seeded archive is sufficient to start initial validation when no browse
@@ -1297,30 +1312,26 @@ def browse_new(path:str=Query(...),recursive:bool=False,since:int=Query(0,ge=0),
  obs=obs_for([x['path'] for x in packet['files']])
  for record in packet['files']:record['observations']=obs.get(record['path'],[])
  packet['files']=[f for f in packet['files'] if not ignored_content(f['path'])]
- packet['observation_revision']=OBS_REV
+ packet['observation_revision']=OBS_REV;packet['observation_epoch']=OBS_EPOCH
  return packet
 
 def _browse_chunk_worker(token:str,p:Path,recursive:bool):
- from .filesystem_order import ordered_paths
+ from .filesystem_order import walk_images
  t0=time.perf_counter();total=0;batch=[]
+ watcher=_get_noticer(p,recursive);watcher.begin_foreground()
  try:
   def candidates():
-   watcher=_get_noticer(p,recursive)
-   watcher.sweep()
-   with watcher.lock:
-    paths=list(watcher.files);notice_cursor=len(watcher.events);notice_epoch=watcher.epoch
-   with BROWSE_SESSIONS_LOCK:
-    sess=BROWSE_SESSIONS.get(token)
-    if sess:sess['notice_cursor']=notice_cursor;sess['notice_epoch']=notice_epoch
-   for raw in ordered_paths(paths):
-    if not ignored_content(raw):yield Path(raw)
+   LOG.info('Browse discovery streaming: tx=%s ? %s ? first chunk does not wait for whole tree',token,p)
+   for path in walk_images(p,recursive,IMAGE_EXTS,watcher.seed_directory if not paged else None):
+    if not ignored_content(str(path)):yield path
   def publish(paths,chunk_index=None):
    nonlocal total
    records=[]
    for x in paths:
     try:st=x.stat()
     except (FileNotFoundError,PermissionError,OSError):continue
-    record={'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime}
+    if not st.st_size:continue
+    record={'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime,'pixel_revision':PIXEL_REVISIONS.get(x)}
     if BROWSE_SESSIONS.get(token,{}).get('mobile'):
      try:
       with Image.open(x) as image:
@@ -1330,6 +1341,8 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
      except (OSError,ValueError):pass
     records.append(record)
    if records:
+    active_watcher=watcher or _get_noticer(p,recursive)
+    active_watcher.seed_records(records)
     obs=obs_for([x['path'] for x in records])
     for x in records:x['observations']=obs.get(x['path'],[])
     # Preserve the global directory/filename order across chunk boundaries.
@@ -1340,6 +1353,7 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
      chunk_index=len(sess['chunks']);sess['chunks'].append(records)
     else:sess['chunks'][chunk_index]=records
     total+=len(records);sess['prepared']=total;sess['updated']=time.monotonic()
+    sess['notice_cursor']=len(active_watcher.events) if records else sess.get('notice_cursor',0);sess['notice_epoch']=active_watcher.epoch if records else sess.get('notice_epoch','')
    LOG.info('Browse chunk prepared: tx=%s · chunk=%d · %d files · prepared=%d',token,chunk_index,len(records),total)
    return True
   with BROWSE_SESSIONS_LOCK:paged=bool(BROWSE_SESSIONS.get(token,{}).get('paged'))
@@ -1349,6 +1363,7 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
     sess=BROWSE_SESSIONS.get(token)
     if not sess or sess.get('cancelled'):return
     sess.update(paths_ready=True,path_index=paths,total_files=len(paths),total_chunks=(len(paths)+BROWSE_CHUNK_SIZE-1)//BROWSE_CHUNK_SIZE)
+   watcher.end_foreground();watcher=None
    LOG.info('Windowed catalog indexed: tx=%s · %s paths · page metadata prepared only on request',token,len(paths))
    while not STOP_REQUESTED:
     with BROWSE_SESSIONS_LOCK:
@@ -1379,6 +1394,9 @@ def _browse_chunk_worker(token:str,p:Path,recursive:bool):
   with BROWSE_SESSIONS_LOCK:
    sess=BROWSE_SESSIONS.get(token)
    if sess:sess['error']=f'{type(e).__name__}: {e}';sess['complete']=True;sess['updated']=time.monotonic();sess['completed_at']=time.monotonic()
+
+ finally:
+  if watcher is not None:watcher.end_foreground()
 
 
 from .directory_tree import DirectoryTree
@@ -1487,7 +1505,7 @@ def browse(path:str=Query(...),recursive:bool=False,tx:str=Query('')):
  for x in files:
   try:st=x.stat()
   except (FileNotFoundError,PermissionError,OSError):continue
-  records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime})
+  records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime,'pixel_revision':PIXEL_REVISIONS.get(x)})
  LOG.info('Browse phase stat: %d records · %.3fs',len(records),time.perf_counter()-t)
  try:
   t=time.perf_counter();paths=[x['path'] for x in records];obs=obs_for(paths);LOG.info('Browse phase observations: %d paths · %.3fs',len(paths),time.perf_counter()-t)
@@ -1558,7 +1576,14 @@ def custom_observation_labels():
 def correct_observation(req:ObservationCorrectionRequest):
  p=norm(req.path)
  if not image_file(p):raise HTTPException(404,'Image not found')
- if req.action not in ('reject','relabel'):raise HTTPException(400,'action must be reject or relabel')
+ if req.action not in ('reject','relabel','delete'):raise HTTPException(400,'action must be reject, relabel or delete')
+ if req.action in ('reject','delete'):
+  from .observation_review import reject_or_delete
+  try:
+   with db() as c:result=reject_or_delete(c,{**req.model_dump(),'path':str(p)})
+  except LookupError as e:raise HTTPException(404,str(e))
+  except (ValueError,TypeError) as e:raise HTTPException(400,str(e))
+  bump_obs_revision();return {**result,'revision':OBS_REV}
  corrected=(req.corrected_concept or '').strip()
  if req.action=='relabel' and not corrected:raise HTTPException(400,'Relabel needs a corrected concept')
  with db() as c:
@@ -1574,8 +1599,10 @@ def correct_observation(req:ObservationCorrectionRequest):
   if req.action=='relabel':
    from .subject_learning import geometry as learning_geometry,is_subject,mark_manual
    corrected_geometry=req.geometry
+   if corrected_geometry:
+    cg=json.loads(corrected_geometry);cg.pop('_n8_review',None);corrected_geometry=json.dumps(cg,sort_keys=True,separators=(',',':'))
    if corrected!=req.concept and is_subject({'geometry':req.geometry,'provider':req.provider}):
-    corrected_geometry=json.dumps(mark_manual(learning_geometry(req.geometry),'label_changed',corrected,req.concept),sort_keys=True,separators=(',',':'))
+    corrected_geometry=json.dumps(mark_manual(learning_geometry(corrected_geometry),'label_changed',corrected,req.concept),sort_keys=True,separators=(',',':'))
    c.execute('INSERT OR REPLACE INTO observations(path,concept,confidence,provider,model,kind,geometry,updated) VALUES(?,?,?,?,?,?,?,unixepoch())',
      (str(p),corrected,1.0,'human-correction',f'relabel:{req.provider}:{req.model}',req.kind,corrected_geometry))
  bump_obs_revision()
@@ -1735,7 +1762,7 @@ def observations(req:ObservationRequest):
     for r in rows:out.setdefault(r['path'],[]).append(dict(r))
  from .observation_display import annotate
  out={path:annotate(rows) for path,rows in out.items()}
- return {'revision':OBS_REV,'observations':out}
+ return {'revision':OBS_REV,'observation_epoch':OBS_EPOCH,'observations':out}
 
 class DetectorCleanupRequest(BaseModel):
  token:str
@@ -1775,10 +1802,11 @@ def thumb(path:str=Query(...)):
   st=p.stat();cfg=_load_config().get('thumbnail_cache',{});max_axis=300;producer=int(cfg.get('producer_version',1))
   # Source identity makes changed pixels produce a new cache object. Cache objects are
   # disposable derived data and are deliberately unrelated to the source directory tree.
-  identity=f'v{producer}|{max_axis}|{p}|{st.st_size}|{st.st_mtime_ns}'
+  revision=PIXEL_REVISIONS.get(p)
+  identity=f'v{producer}|{max_axis}|{p}|{st.st_size}|{st.st_mtime_ns}|{revision}'
   key=hashlib.sha256(identity.encode('utf-8','surrogatepass')).hexdigest()
   root=thumbnail_cache_root(p);out=root/'thumbnails'/key[:2]/key[2:4]/(key+'.webp')
-  reuse=_cache_reusable(p,'thumbnail')
+  reuse=None if revision else _cache_reusable(p,'thumbnail')
   if reuse is not None:out=reuse
   if not out.exists():
    out.parent.mkdir(parents=True,exist_ok=True)
@@ -1817,9 +1845,11 @@ def _overlay_color(provider:str,model:str):
 
 def _grid_overlay_rows(path:str,kind:str):
  with db() as c:
-  rows=c.execute("SELECT concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind IN ('bbox','mask') AND confidence>0 AND geometry IS NOT NULL",(path,)).fetchall()
+  rows=c.execute("SELECT concept,confidence,provider,model,kind,geometry FROM observations WHERE path=? AND kind IN ('bbox','mask') AND geometry IS NOT NULL",(path,)).fetchall()
  out=[]
  from .observation_display import display_rows
+ from .observation_review import negative
+ rows=[dict(r) for r in rows if r['confidence']>0 or negative(dict(r))]
  for r in display_rows(rows):
   try:g=json.loads(r['geometry']) if isinstance(r['geometry'],str) else (r['geometry'] or {})
   except Exception:continue
@@ -1858,7 +1888,12 @@ def grid_overlay(path:str=Query(...),kind:str=Query(...)):
      if g.get('subject_role') is not False and (g.get('subject_role') or g.get('subject_pipeline') or r['provider']=='subject-intelligence'):
       concept='Subject — '+('Unidentified' if concept.casefold()=='unidentified subject' else concept)
      score=float(g.get('name_confidence',r['confidence'])) if g.get('name_accepted') else float(r['confidence'])
+     from .observation_review import negative
      label=f"{concept} {round(score*100)}%"
+     if negative(r):
+      model=re.sub(r'#.*$','',r['model']).replace('\\','/').split('/')[-1]
+      model=re.sub(r'\.(pt|pth|onnx|safetensors|engine)$','',model,flags=re.I)
+      label=f"[{model or r['provider']}-Neg]"
      import html
      bits.append(f'<rect x="{x1:.2f}" y="{y1:.2f}" width="{max(0,x2-x1):.2f}" height="{max(0,y2-y1):.2f}" fill="none" stroke="{c}" stroke-width="2"/>')
      bits.append(f'<text x="{x1+2:.2f}" y="{max(10,y1+10):.2f}" fill="{c}" stroke="black" stroke-width="2" paint-order="stroke" font-family="sans-serif" font-size="9">{html.escape(label)}</text>')
@@ -1954,7 +1989,11 @@ def set_yolo_settings(req:YoloSettingsRequest):
  cfg=_load_config(); y=cfg.setdefault('yolo',{})
  y['world_classes']=list(dict.fromkeys(x.strip() for x in req.world_classes if x.strip()))
  y['batch_size']=max(1,min(128,int(req.batch_size or 16)))
- _save_config(cfg);return y
+ try:_save_config(cfg)
+ except OSError as error:
+  LOG.warning('YOLO settings could not be saved after retrying: %s',error)
+  raise HTTPException(503,'Scan settings could not be saved because the configuration file is busy or unavailable. Please try again.') from error
+ return y
 
 class ModelSweepRequest(BaseModel):
  paths:list[str]
@@ -2199,34 +2238,63 @@ def builtin_lens_sweep(paths,lenses,conf,batch_size=16,world_classes=None,progre
 
 @app.post('/api/models/sweep')
 def model_sweep(req:ModelSweepRequest):
+
  if req.engine!='ultralytics':raise HTTPException(400,'Unsupported engine')
+
  discovered={m['path']:m for m in scan_ultralytics_models(False)}
+
  selected=req.models or list(discovered)
+
  selected=[x for x in selected if x in discovered]
+
  if not selected:raise HTTPException(400,'No enabled Ultralytics models selected')
+
  local=[x for x in selected if not x.startswith('builtin:')]; builtin=[x for x in selected if x.startswith('builtin:')]
+
  jid=uuid.uuid4().hex[:12]; total=len(req.paths)*len(selected)
+
  JOBS[jid]={'id':jid,'kind':'vision-sweep','state':'queued','done':0,'total':total,'created':time.time(),
+
             'model_index':0,'model_total':len(selected),'current_model':'','model_done':0,'model_images':len(req.paths),'detections':0}
+
  _write_active_job_journal()
+
  def run():
+
   try:
+
    JOBS[jid]['state']='running'; _write_active_job_journal(); detections=0; summaries=[]; done_offset=0
+
    if local:
+
     r=yolo_model_sweep(req.paths,local,req.confidence,req.batch_size,
+
        progress=lambda d,t:job_progress(jid,d,total),job_id=jid,thresholds=req.thresholds)
+
     detections+=r['detections'];summaries+=r['models'];done_offset=len(req.paths)*len(local)
+
    if builtin:
+
     r=builtin_lens_sweep(req.paths,builtin,req.confidence,req.batch_size,req.world_classes,
+
        progress=lambda d,t:job_progress(jid,done_offset+d,total),job_id=jid,thresholds=req.thresholds)
+
     detections+=r['detections'];summaries+=r['models']
+
    JOBS[jid].update(state='done',result={'models':summaries,'detections':detections},done=total,detections=detections); _write_active_job_journal()
+
   except JobCancelled as e:
+
    JOBS[jid].update(state='stopped',error=str(e),updated=time.time());_write_active_job_journal();LOG.info('Job %s stopped: vision sweep — %s',jid,e)
+
   except Exception as e:
+
    JOBS[jid].update(state='error',error=str(e)); _write_active_job_journal();LOG.exception('Job %s failed: vision sweep — %s',jid,e)
+
  threading.Thread(target=run,daemon=True).start()
+
  return JOBS[jid]
+
 
 class Paths(BaseModel):paths:list[str]
 class MoveRequest(Paths):destination:str
@@ -2392,7 +2460,7 @@ def mkdir(req:MkdirRequest):
 def file(path:str=Query(...)):
  p=norm(path)
  if not image_file(p):raise HTTPException(404,'Image not found')
- return FileResponse(p)
+ return FileResponse(p,headers={'Cache-Control':'no-store, max-age=0'})
 
 def clip_parts(model_name):
  import torch
@@ -3874,11 +3942,15 @@ def start_job(kind,fn,*args):
  elif isinstance(payload,(list,tuple,set)): total=len(payload)
  else: total=0
  jid=uuid.uuid4().hex[:12];JOBS[jid]={'id':jid,'kind':kind,'state':'queued','done':0,'total':total,'created':time.time()}
- if kind.startswith('comfy:') and isinstance(payload,dict): payload['_n8_batch_id']=jid
+ if kind.startswith('comfy:') and isinstance(payload,dict):
+  payload['_n8_batch_id']=jid;JOBS[jid]['source_paths']=list(payload.get('paths') or [])
+ if kind in {'learning:yolo-evolve','learning:maintenance-retrain'}:
+  JOBS[jid].update(training_model=getattr(payload,'name','YOLO'),phase='waiting for YOLO training slot')
  _write_active_job_journal()
  def run():
   try:
-   JOBS[jid]['state']='running'; _write_active_job_journal()
+   if JOBS[jid].get('cancel_requested') or STOP_REQUESTED:raise JobCancelled('Queued job cancelled before training')
+   JOBS[jid].update(state='running',phase='starting'); _write_active_job_journal()
    if kind=='subject-class-training':LOG.info('Job %s started: %s (collecting confirmed teaching set)',jid,kind)
    else:LOG.info('Job %s started: %s (%s items)',jid,kind,JOBS[jid]['total'])
    res=fn(*args,progress=lambda d,t,**meta:job_progress(jid,d,t,**meta))
@@ -3904,7 +3976,11 @@ def start_job(kind,fn,*args):
    JOBS[jid].update(state='stopped',error=str(e),updated=time.time()); _write_active_job_journal(); LOG.info('Job %s stopped: %s',jid,kind)
   except Exception as e:
    JOBS[jid].update(state='error',error=str(e)); _write_active_job_journal(); LOG.exception('Job %s failed: %s — %s',jid,kind,e)
- threading.Thread(target=run,daemon=True).start();return JOBS[jid]
+ if kind in {'learning:yolo-evolve','learning:maintenance-retrain'}:
+  from .serial_training import YOLO_TRAINING_QUEUE
+  YOLO_TRAINING_QUEUE.submit(run)
+ else:threading.Thread(target=run,daemon=True).start()
+ return JOBS[jid]
 
 class RasterSanityRequest(Paths):
  thumbnail:int=256
@@ -4190,19 +4266,20 @@ class LensFindingsDeleteRequest(BaseModel):
 @app.post('/api/models/delete-findings')
 def delete_lens_findings(req:LensFindingsDeleteRequest):
  paths=list(dict.fromkeys(str(norm(x)) for x in req.paths))
- if not paths:return {'deleted':0,'files':0}
+ if not paths:return {'deleted':0,'files':0,'changed_paths':[],'observations':{},'revision':OBS_REV,'previous_revision':OBS_REV}
  lens=req.lens
  if lens=='builtin:oiv7':provider='ultralytics-oiv7';base='yolov8n-oiv7.pt'
  elif lens=='builtin:world':provider='ultralytics-world';base='yolov8s-worldv2.pt'
  else:provider='ultralytics';base=str(norm(lens))
- deleted=0
+ deleted=0;changed=[];previous_revision=OBS_REV
  with db() as c:
   for start in range(0,len(paths),500):
    chunk=paths[start:start+500];marks=','.join('?'*len(chunk));args=[*chunk,provider,base,base+'#%']
-   deleted+=c.execute(f"SELECT COUNT(*) FROM observations WHERE path IN ({marks}) AND provider=? AND (model=? OR model LIKE ?)",args).fetchone()[0]
+   affected=c.execute(f"SELECT path,COUNT(*) AS n FROM observations WHERE path IN ({marks}) AND provider=? AND (model=? OR model LIKE ?) GROUP BY path",args).fetchall()
+   changed.extend(r['path'] for r in affected);deleted+=sum(r['n'] for r in affected)
    c.execute(f"DELETE FROM observations WHERE path IN ({marks}) AND provider=? AND (model=? OR model LIKE ?)",args)
- bump_obs_revision()
- return {'deleted':deleted,'files':len(paths),'lens':lens}
+ revision=bump_obs_revision() if deleted else OBS_REV
+ return {'deleted':deleted,'files':len(paths),'lens':lens,'changed_paths':changed,'observations':obs_for(changed),'revision':revision,'previous_revision':previous_revision,'observation_epoch':OBS_EPOCH}
 
 @app.post('/api/dev/analysis/shown')
 def discard_shown_analysis(req:DiscardShownRequest):
@@ -4243,7 +4320,11 @@ def stop_analysis():
  return {'requested':len(stopped),'jobs':stopped}
 
 @app.get('/api/jobs')
-def jobs():return {'jobs':sorted(JOBS.values(),key=lambda x:x['created'],reverse=True)[:20],'observation_revision':OBS_REV}
+def jobs():
+ snapshot=sorted((dict(job) for job in list(JOBS.values())),key=lambda x:x['created'],reverse=True)
+ active=[job for job in snapshot if job.get('state') in ('queued','running','recovering')]
+ recent=[job for job in snapshot if job.get('state') not in ('queued','running','recovering')]
+ return {'jobs':active+recent[:max(0,20-len(active))],'observation_revision':OBS_REV,'observation_epoch':OBS_EPOCH}
 
 # --- P.90 Learning Loop: box -> SAM/paint -> YOLO model evolution ---
 SAM_MODELS=MODELS/'sam'; SAM_MODELS.mkdir(parents=True,exist_ok=True)
@@ -4255,6 +4336,8 @@ class SamMaskRequest(BaseModel):
 class YoloEvolutionRequest(BaseModel):
  mode:str='new'                 # new | add_class | add_segmentation | retrain
  name:str='n8vision-seg'
+ include_rejected:bool=True
+ task:str='detect'              # new models: detect or segment; existing models retain their task
  base_model:str|None=None
  classes:list[str]|None=None
  epochs:int=100
@@ -4265,6 +4348,7 @@ class LearningSettingsRequest(BaseModel):
  maintenance_enabled:bool=False
  maintenance_time:str='03:00'
  correction_threshold:int=25
+ maintenance_epochs:int=20
 
 def _rle_from_binary(a):
  flat=a.reshape(-1);out=[];i=0;n=len(flat)
@@ -4327,12 +4411,12 @@ def learning_options():
  with db() as c:
   concepts=[r[0] for r in c.execute("SELECT DISTINCT concept FROM observations WHERE confidence>0 AND kind IN ('bbox','mask') ORDER BY concept COLLATE NOCASE").fetchall()]
   human=int(c.execute("SELECT COUNT(*) FROM corrections WHERE action IN ('teach','relabel','reject')").fetchone()[0]) if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='corrections'").fetchone() else 0
- return {'models':models,'bbox_only':bbox_only,'concepts':concepts,'settings':cfg,'manual_observations':human}
+ return {'models':models,'bbox_only':bbox_only,'concepts':concepts,'settings':cfg,'manual_observations':human,'rejected_samples':[{'concept':concept,'images':len({r['path'] for r in _training_negatives([concept])})} for concept in sorted({r['concept'] for r in _training_negatives()},key=str.lower)]}
 
 @app.put('/api/learning/settings')
 def learning_settings(req:LearningSettingsRequest):
  if not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d',req.maintenance_time):raise HTTPException(400,'maintenance_time must be HH:MM')
- cfg=_load_config();cfg['learning']={'maintenance_enabled':bool(req.maintenance_enabled),'maintenance_time':req.maintenance_time,'correction_threshold':max(1,int(req.correction_threshold)),'last_maintenance_day':cfg.get('learning',{}).get('last_maintenance_day','')};_save_config(cfg);return cfg['learning']
+ cfg=_load_config();cfg['learning']={'maintenance_enabled':bool(req.maintenance_enabled),'maintenance_time':req.maintenance_time,'correction_threshold':max(1,int(req.correction_threshold)),'maintenance_epochs':max(1,int(req.maintenance_epochs)),'last_maintenance_day':cfg.get('learning',{}).get('last_maintenance_day','')};_save_config(cfg);return cfg['learning']
 
 def _training_annotations(classes=None):
  wanted=set(classes or []);out={}
@@ -4349,6 +4433,14 @@ def _training_annotations(classes=None):
   if old is None or (r['kind']=='mask' and old['kind']!='mask'):out[key]={**dict(r),'geometry_obj':g}
  return list(out.values())
 
+def _training_negatives(classes=None):
+ from .observation_review import negative
+ wanted=set(classes or [])
+ with db() as c:
+  rows=c.execute("SELECT path,concept,confidence,geometry FROM observations WHERE confidence<0 AND kind IN ('bbox','mask')").fetchall()
+ return [dict(r) for r in rows if (not wanted or r['concept'] in wanted) and negative(dict(r))]
+
+
 def _seg_architecture_for(base:str|None):
  if not base:return 'yolo11n-seg.pt'
  stem=Path(base).stem.lower()
@@ -4359,52 +4451,69 @@ def _seg_architecture_for(base:str|None):
 
 def _evolve_yolo(req:YoloEvolutionRequest,progress=None):
  from ultralytics import YOLO
+ from .yolo_training_labels import label_lines
  import yaml
  mode=req.mode.lower().strip()
  if mode not in {'new','add_class','add_segmentation','retrain'}:raise RuntimeError('Unknown evolution mode')
+ base=req.base_model;old_classes=[]
+ if mode=='new':
+  task=req.task.lower().strip()
+  if task not in {'detect','segment'}:raise RuntimeError('Choose bounding-box detection or segmentation')
+  model=YOLO('yolo11n.pt' if task=='detect' else 'yolo11n-seg.pt')
+ else:
+  if not base:raise RuntimeError(f'{mode} requires an existing model')
+  previous=YOLO(base)
+  task='segment' if mode=='add_segmentation' else getattr(previous,'task',None)
+  if task not in {'detect','segment'}:raise RuntimeError('Existing model must be a detector or segmenter')
+  names=getattr(previous,'names',{}) or {}
+  old_classes=list(names.values()) if isinstance(names,dict) else list(names)
+  if mode=='add_segmentation':model=YOLO(_seg_architecture_for(base));model.load(base)
+  else:model=previous
  selected=list(req.classes or [])
- # Add-Class and Retrain retain the extant vocabulary: replay archived masks for old classes
- # alongside the new/corrected observations instead of teaching the network to forget.
- if req.base_model and mode in {'add_class','retrain'}:
-  try:
-   old_names=getattr(YOLO(req.base_model),'names',{}) or {};old_classes=list(old_names.values()) if isinstance(old_names,dict) else list(old_names)
-   selected=sorted(set(selected)|set(map(str,old_classes)),key=str.lower)
-  except Exception:pass
+ if base and mode in {'add_class','retrain','add_segmentation'}:selected=list(dict.fromkeys(old_classes+selected))
  annotations=_training_annotations(selected or None)
- masks=[x for x in annotations if x['kind']=='mask']
- if not masks:raise RuntimeError('No masked observations match this training request. Box/paint examples first.')
- classes=sorted(set(x['concept'] for x in masks),key=str.lower);class_id={x:i for i,x in enumerate(classes)}
- run_id=time.strftime('%Y%m%d-%H%M%S');name=_safe_name(req.name);root=LEARNING_ROOT/name/run_id;images=root/'dataset'/'images'/'train';labels=root/'dataset'/'labels'/'train';images.mkdir(parents=True);labels.mkdir(parents=True)
+ if not annotations:raise RuntimeError('No box or mask annotations match this training request. Draw boxes or paint masks first.')
+ classes=list(dict.fromkeys(old_classes+sorted({x['concept'] for x in annotations},key=str.lower)));class_id={x:i for i,x in enumerate(classes)}
+ run_id=time.strftime('%Y%m%d-%H%M%S')+'-'+uuid.uuid4().hex[:6];name=_safe_name(req.name);root=LEARNING_ROOT/name/run_id
+ images=root/'dataset'/'images'/'train';labels=root/'dataset'/'labels'/'train';images.mkdir(parents=True);labels.mkdir(parents=True)
  by_path={}
- for x in masks:by_path.setdefault(x['path'],[]).append(x)
- total=len(by_path)
+ for x in annotations:by_path.setdefault(x['path'],[]).append(x)
+ negatives=_training_negatives(classes) if req.include_rejected else []
+ for x in negatives:by_path.setdefault(x['path'],[])
+ negative_paths={x['path'] for x in negatives}
+ total=len(by_path);samples=0;instances=0;masked_instances=0;box_instances=0;negative_images=0;background_images=0
  for i,(raw,items) in enumerate(by_path.items(),1):
   src=norm(raw)
   if not image_file(src):continue
   with Image.open(src) as im:w,h=im.size
-  dst=images/f'{i:06d}{src.suffix.lower()}';shutil.copy2(src,dst);lines=[]
+  lines=[]
   for x in items:
-   for poly in _mask_polygon(x['geometry_obj'],w,h):
-    pts=[]
-    for px,py in poly:pts.extend((max(0,min(1,float(px)/w)),max(0,min(1,float(py)/h))))
-    if len(pts)>=6:lines.append(str(class_id[x['concept']])+' '+' '.join(f'{q:.6f}' for q in pts))
-  (labels/f'{i:06d}.txt').write_text('\n'.join(lines),encoding='utf-8')
-  if progress:progress(i,total,phase='assembling-segmentation-dataset')
+   try:lines.extend(label_lines(x,class_id[x['concept']],w,h,task,_mask_polygon))
+   except ValueError as e:raise RuntimeError(f"Invalid training annotation for {src.name} ({x['concept']}): {e}") from e
+   instances+=1
+   if 'polygon' in x['geometry_obj'] or 'mask_rle' in x['geometry_obj']:masked_instances+=1
+   else:box_instances+=1
+  if raw in negative_paths:negative_images+=1
+  if not lines:background_images+=1
+  dst=images/f'{i:06d}{src.suffix.lower()}';shutil.copy2(src,dst)
+  (labels/f'{i:06d}.txt').write_text('\n'.join(lines),encoding='utf-8');samples+=1
+  if progress:progress(i,total,phase='assembling-'+task+'-dataset')
+ if not samples:raise RuntimeError('No accessible source images for these annotations')
  data={'path':str(root/'dataset'),'train':'images/train','val':'images/train','names':{i:c for c,i in class_id.items()}}
  data_path=root/'dataset.yaml';data_path.write_text(yaml.safe_dump(data,sort_keys=False),encoding='utf-8')
- base=req.base_model
- if mode=='new':model=YOLO('yolo11n-seg.pt')
- elif mode=='add_segmentation':
-  if not base:raise RuntimeError('Add Segmentation requires an existing detector model')
-  model=YOLO(_seg_architecture_for(base));model.load(base)
- else:
-  if not base:raise RuntimeError(f'{mode} requires an existing model')
-  model=YOLO(base)
+ LOG.info('YOLO training: %s, %s images, %s boxes, %s masks; unmasked boxes cover full rectangle',task,samples,box_instances,masked_instances)
+ LOG.info('YOLO negative teaching: %s images with rejected detections, %s background-only images; rejected boxes excluded, positive boxes retained',negative_images,background_images)
+ if progress:
+  def epoch_start(trainer):progress(int(trainer.epoch),int(trainer.epochs),phase=f'training epoch {int(trainer.epoch)+1}/{int(trainer.epochs)}',training_model=name,items_per_second=None,eta_seconds=None)
+  def epoch_end(trainer):progress(int(trainer.epoch)+1,int(trainer.epochs),phase=f'completed epoch {int(trainer.epoch)+1}/{int(trainer.epochs)}',training_model=name,items_per_second=None,eta_seconds=None)
+  model.add_callback('on_train_epoch_start',epoch_start)
+  model.add_callback('on_fit_epoch_end',epoch_end)
+  progress(0,max(1,int(req.epochs)),phase='starting training',training_model=name,items_per_second=None,eta_seconds=None)
  result=model.train(data=str(data_path),epochs=max(1,int(req.epochs)),imgsz=max(128,int(req.imgsz)),batch=int(req.batch),device=req.device or None,project=str(root/'runs'),name='evolve',exist_ok=True)
  best=Path(getattr(result,'save_dir',root/'runs'/'evolve'))/'weights'/'best.pt'
  if not best.exists():raise RuntimeError(f'Training completed but best.pt was not found at {best}')
- final=ULTRA_MODELS/'seg'/f'{name}.pt';shutil.copy2(best,final)
- receipt={'schema':1,'mode':mode,'name':name,'base_model':base,'classes':classes,'samples':len(by_path),'masked_instances':len(masks),'epochs':int(req.epochs),'imgsz':int(req.imgsz),'created':time.time(),'correction_baseline':time.time(),'best':str(best),'installed':str(final),'dataset':str(data_path)};_write_json(root/'n8vision-evolution.json',receipt)
+ target_dir=ULTRA_MODELS/('bbox' if task=='detect' else 'seg');target_dir.mkdir(parents=True,exist_ok=True);final=target_dir/f'{name}.pt';shutil.copy2(best,final)
+ receipt={'schema':1,'mode':mode,'task':task,'name':name,'base_model':base,'classes':classes,'samples':samples,'instances':instances,'masked_instances':masked_instances,'box_instances':box_instances,'include_rejected':req.include_rejected,'negative_images':negative_images,'background_images':background_images,'epochs':int(req.epochs),'imgsz':int(req.imgsz),'created':time.time(),'correction_baseline':time.time(),'best':str(best),'installed':str(final),'dataset':str(data_path)};_write_json(root/'n8vision-evolution.json',receipt)
  return receipt
 
 @app.post('/api/learning/evolve')
@@ -4441,7 +4550,7 @@ def _learning_maintenance_loop():
    if hhmm!=str(lc.get('maintenance_time','03:00')) or lc.get('last_maintenance_day')==today:continue
    lc['last_maintenance_day']=today;cfg['learning']=lc;_save_config(cfg)
    for r,count in _maintenance_candidates():
-    req=YoloEvolutionRequest(mode='retrain',name=r.get('name') or Path(r['installed']).stem,base_model=r['installed'],classes=r.get('classes') or [],epochs=int(r.get('epochs') or 100),imgsz=int(r.get('imgsz') or 640),batch=-1)
+    req=YoloEvolutionRequest(mode='retrain',name=r.get('name') or Path(r['installed']).stem,base_model=r['installed'],classes=r.get('classes') or [],epochs=max(1,int(lc.get('maintenance_epochs') or 20)),imgsz=int(r.get('imgsz') or 640),batch=-1)
     job=start_job('learning:maintenance-retrain',_evolve_yolo,req)
     LOG.info('Maintenance retrain queued: %s · %s manual corrections · job %s',r.get('name'),count,job['id'])
   except Exception as e:LOG.exception('Learning maintenance check failed: %s',e)
@@ -5071,6 +5180,8 @@ def _scan_comfy_tool_shelf_once(env:dict):
 def _startup_comfy_tool_shelf_scan():
  # Scan each known online Comfy once. A later Bridge proclamation covers the opposite launch order.
  time.sleep(2.0)
+ while not STOP_REQUESTED and _browse_gate_paused():time.sleep(.25)
+ if STOP_REQUESTED:return
  for env in _load_envs().get('environments',[]):
   if env.get('kind')=='comfy' and _env_online(env):_scan_comfy_tool_shelf_once(env)
 
@@ -5389,6 +5500,94 @@ def environment_dispatch(req:ExternalDispatchRequest):
  raise HTTPException(501,f"Dispatch adapter not implemented for {env.get('kind')}; shelf discovery is working.")
 
 
+# Optional workflow expansions are installed separately from core source.
+WORKFLOW_PACKS=Path(__file__).resolve().parent/'expansions'
+
+class WorkflowPackRequest(BaseModel):
+ pack_id:str; environment_id:str; paths:list[str]; regions:list[RegionChoice]=[]; destination:str=''
+
+def _load_workflow_pack(pack_id):
+ from .workflow_packs import load
+ try:return load(WORKFLOW_PACKS,pack_id)
+ except FileNotFoundError:raise HTTPException(404,'Workflow pack is not installed')
+ except (ValueError,TypeError) as e:raise HTTPException(400,str(e))
+
+def _check_pack_environment(environment_id,graph):
+ env=_find_comfy_env(environment_id)
+ shelf=(_read_comfy_tool_shelves().get('environments') or {}).get(environment_id,{})
+ available={t['type'] for t in shelf.get('tools',[])}
+ missing=sorted({n['class_type'] for n in graph.values()}-available)
+ if missing:raise HTTPException(409,'Install the required Comfy nodes and Refresh Shelves: '+', '.join(missing))
+ return env
+
+def _pack_regions(path,manifest):
+ from .workflow_packs import matching_rows
+ return matching_rows(_region_rows(path),manifest)
+
+@app.get('/api/workflow-packs')
+def workflow_packs_list():
+ from .workflow_packs import discover
+ return {'packs':discover(WORKFLOW_PACKS)}
+
+@app.post('/api/workflow-packs/prepare')
+def workflow_pack_prepare(req:WorkflowPackRequest):
+ manifest,graph=_load_workflow_pack(req.pack_id);_check_pack_environment(req.environment_id,graph);items=[]
+ for raw in dict.fromkeys(req.paths):
+  path=norm(raw)
+  if image_file(path):
+   with Image.open(path) as image:source_size=list(image.size)
+   items.append({'path':str(path),'name':path.name,'metadata':{},'source_size':source_size,'regions':_pack_regions(str(path),manifest)})
+ return {'workflow':manifest['name'],'pack_id':req.pack_id,'description':manifest.get('description',''),'tokens':[],'format':'api','requires_mask':True,'combine_regions':True,'items':items}
+
+def _verified_pack_work(req,manifest):
+ wanted={}
+ for region in req.regions:
+  if region.queued:wanted.setdefault(str(norm(region.path)),set()).add(region.geometry)
+ work=[]
+ for raw in dict.fromkeys(req.paths):
+  path=norm(raw)
+  if not image_file(path):continue
+  regions=[r for r in _pack_regions(str(path),manifest) if r['geometry'] in wanted.get(str(path),set())]
+  if regions:work.append((path,regions))
+ return work
+
+def _workflow_pack_batch(payload,progress=None):
+ import urllib.request,urllib.error
+ from .workflow_packs import bind,save_union_mask
+ req=WorkflowPackRequest(**payload);manifest,graph=_load_workflow_pack(req.pack_id)
+ env=_check_pack_environment(req.environment_id,graph);work=_verified_pack_work(req,manifest)
+ if not work:raise RuntimeError('No checked, current positive detections to process. Review or rerun the detector first.')
+ batch_id=payload['_n8_batch_id'];root=norm(env.get('root') or '.');stage=root/'input'/'N8Vision';stage.mkdir(parents=True,exist_ok=True)
+ with OUTPUT_RECOVERY_LOCK:COMFY_RECOVERY_BATCHES[batch_id]={'id':batch_id,'kind':'workflow-pack','total':len(work),'terminal':0,'recovered':0,'failed':0,'sources':[str(p) for p,_ in work],'targets':[],'complete':False,'updated':time.time()}
+ submitted=[]
+ for i,(src,regions) in enumerate(work,1):
+  from .generation_text import snapshot
+  original_text=snapshot(src)
+  token=uuid.uuid4().hex;name=token+src.suffix.lower();mask_name=token+'_mask.png';shutil.copy2(src,stage/name)
+  with Image.open(src) as image:save_union_mask(image.size,regions,manifest.get('padding',0),stage/mask_name)
+  prefix=f"N8Vision/{src.stem}_{_method_slug(manifest['name'])}_{token}"
+  prompt=bind(graph,'N8Vision/'+name,'N8Vision/'+mask_name,prefix,token);_validate_comfy_prompt(prompt,True,mask_name)
+  release_models(force=True);body=json.dumps({'prompt':prompt,'client_id':'n8vision-workflow-pack'}).encode()
+  request=urllib.request.Request(env['api_url'].rstrip('/')+'/prompt',data=body,headers={'Content-Type':'application/json'},method='POST')
+  try:
+   with urllib.request.urlopen(request,timeout=15) as response:answer=json.loads(response.read().decode())
+  except urllib.error.HTTPError as e:raise RuntimeError(f"Comfy rejected {manifest['name']}: {e.read().decode(errors='replace')}") from e
+  pid=answer.get('prompt_id')
+  if not pid:raise RuntimeError('Comfy did not return a prompt ID')
+  _arm_comfy_output_recovery(pid,{'source':str(src),'destination':req.destination,'method':manifest['name'],'original_text':original_text,'environment_id':req.environment_id,'output_prefix':prefix,'job_token':token,'iteration':0,'batch_id':batch_id})
+  submitted.append({'source':str(src),'prompt_id':pid,'regions':len(regions)})
+  if progress:progress(i,len(work))
+ return {'submitted':submitted,'destination':req.destination,'pack_id':req.pack_id}
+
+@app.post('/api/workflow-packs/dispatch')
+def workflow_pack_dispatch(req:WorkflowPackRequest):
+ if req.destination not in {'beside','replace','comfy'}:raise HTTPException(400,'Choose Beside, Replace or Output first')
+ manifest,graph=_load_workflow_pack(req.pack_id);_check_pack_environment(req.environment_id,graph)
+ work=_verified_pack_work(req,manifest)
+ if not work:raise HTTPException(400,'No checked positive detections remain. Run the pack detector or review the boxes first.')
+ payload=req.model_dump();payload['paths']=[str(p) for p,_ in work]
+ return start_job('comfy:workflow-pack',_workflow_pack_batch,payload)
+
 # --- P.56 deterministic single-stage refinement recipe executor ---
 class RefinementDispatchRequest(BaseModel):
  environment_id:str; recipe:dict[str,Any]; paths:list[str]; model:str=''; positive:str=''; negative:str=''; seed:int=0; source_steps:int=0; refinement_steps:int=10; cfg:float=8.0; sampler:str=''; scheduler:str=''; loras:list[dict[str,Any]]=[]; destination:str='comfy'; prompt_mode:str='per_image_metadata'; translated_prompts:dict[str,dict[str,str]]={}; upscale_settings:dict[str,Any]={}
@@ -5565,6 +5764,13 @@ def _invalidate_replacement_analysis(pending,target):
  bump_obs_revision();pending['_replacement_invalidated']=True
  LOG.info('Replaced image: old pixel analysis invalidated · %s · %s',target,counts)
 
+def _restore_cleanup_text(pending,target):
+ if 'original_text' not in pending or pending.get('_text_restored'):return
+ from .generation_text import restore
+ restore(target,pending['original_text'],pending.get('method','cleanup'))
+ pending['_text_restored']=True
+
+
 def _recover_comfy_asset(pending,env,outputs):
  with OUTPUT_RECOVERY_LOCK:guard=pending.setdefault('_recovery_lock',threading.RLock())
  with guard:return _recover_comfy_asset_locked(pending,env,outputs)
@@ -5576,6 +5782,7 @@ def _recover_comfy_asset_locked(pending,env,outputs):
   return target
  src=norm(pending['source']);fresh=_reported_comfy_output(env,outputs,pending.get('output_prefix',''))
  if fresh is None:raise RuntimeError(f"Comfy reported output ready, but did not report the asset assigned to this job ({pending.get('output_prefix')}).")
+ _restore_cleanup_text(pending,fresh)
  if not src.parent.exists():raise RuntimeError(f'Source folder disappeared before output recovery: {src.parent}')
  mode=pending.get('destination')
  if mode not in {'replace','beside'}:raise RuntimeError('Unsupported recovery destination')
@@ -5612,7 +5819,12 @@ def _notice_recovered_output(target):
  except Exception:LOG.exception('Recovered output intake deferred: %s',target)
 
 def _finish_comfy_recovery(pending,ok,target=None,error=None):
- if ok and target:_notice_recovered_output(target)
+ if ok and target:
+  _restore_cleanup_text(pending,target)
+  with OUTPUT_RECOVERY_LOCK:
+   if not pending.get('_pixel_revision'):
+    pending['_pixel_revision']=PIXEL_REVISIONS.bump(target);_cache_mark_path(str(target),state='invalidated')
+  _notice_recovered_output(target)
  batch_id=str(pending.get('batch_id') or '')
  if not batch_id:return
  with OUTPUT_RECOVERY_LOCK:
@@ -5625,7 +5837,7 @@ def _finish_comfy_recovery(pending,ok,target=None,error=None):
    b['recovered']=int(b.get('recovered',0))+1
    if target:
     b.setdefault('targets',[]).append(str(target))
-    b.setdefault('outputs',[]).append({'source':str(pending.get('source') or ''),'target':str(target),'destination':pending.get('destination')})
+    b.setdefault('outputs',[]).append({'source':str(pending.get('source') or ''),'target':str(target),'destination':pending.get('destination'),'pixel_revision':pending.get('_pixel_revision','')})
   else:
    b['failed']=int(b.get('failed',0))+1
    if error:b.setdefault('errors',[]).append(str(error))
@@ -5663,7 +5875,7 @@ def view_refresh(req:ViewRefreshRequest):
    if not image_file(x):continue
    try:st=x.stat()
    except OSError:continue
-   records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime})
+   records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime,'pixel_revision':PIXEL_REVISIONS.get(x)})
  for raw in ([] if req.paths else req.roots):
   p=norm(raw)
   if not p.exists() or not p.is_dir():continue
@@ -5677,7 +5889,7 @@ def view_refresh(req:ViewRefreshRequest):
    seen.add(key)
    try:st=x.stat()
    except (FileNotFoundError,PermissionError,OSError):continue
-   records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime})
+   records.append({'name':x.name,'path':str(x),'size':st.st_size,'mtime':st.st_mtime,'pixel_revision':PIXEL_REVISIONS.get(x)})
  obs=obs_for([x['path'] for x in records])
  for x in records:x['observations']=obs.get(x['path'],[])
  return {'files':records,'roots':req.roots,'recursive':req.recursive}
@@ -5701,6 +5913,7 @@ def _watch_comfy_output(prompt_id):
       target=_reported_comfy_output(env,outputs,pending.get('output_prefix',''))
       if target is None:raise RuntimeError('Comfy output not yet visible')
      else:target=_recover_comfy_asset(pending,env,outputs)
+     _restore_cleanup_text(pending,target)
      with OUTPUT_RECOVERY_LOCK:PENDING_COMFY_OUTPUTS.pop(pid,None)
      LOG.info('Comfy refinement complete; output recovered server-side: %s -> %s',pid,target)
      _finish_comfy_recovery(pending,True,target=target)
